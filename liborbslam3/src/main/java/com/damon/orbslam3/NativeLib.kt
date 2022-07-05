@@ -11,7 +11,7 @@ class NativeLib {
     companion object {
         // Used to load the 'liborbslam3' library on application startup.
         init {
-            System.loadLibrary("liborbslam3")
+            System.loadLibrary("native-lib")
         }
     }
 }

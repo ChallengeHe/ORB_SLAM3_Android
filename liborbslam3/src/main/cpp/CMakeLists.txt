@@ -1,12 +1,15 @@
 cmake_minimum_required(VERSION 3.18.1)
+project(native-lib)
 
-project("liborbslam3")
+set(OpenCV_DIR D:/opencv/opencv-4.6.0-android-sdk/OpenCV-android-sdk/sdk/native/jni)
+add_subdirectory(orb-slam3)
 
 add_library(
-        liborbslam3
+        ${PROJECT_NAME}
         SHARED
-        liborbslam3.cpp)
+        native-lib.cpp)
 
 target_link_libraries(
-        liborbslam3
+        ${PROJECT_NAME}
+        orbslam3
         log)
