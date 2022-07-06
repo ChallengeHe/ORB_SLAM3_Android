@@ -1,7 +1,7 @@
 /**
 * This file is part of ORB-SLAM3
 *
-* Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+* Copyright (C) 2017-2020 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 * Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 *
 * ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
@@ -18,9 +18,6 @@
 
 #include "TwoViewReconstruction.h"
 
-#include "Converter.h"
-#include "GeometricTools.h"
-
 #include "Thirdparty/DBoW2/DUtils/Random.h"
 
 #include<thread>
@@ -29,29 +26,47 @@
 using namespace std;
 namespace ORB_SLAM3
 {
-    TwoViewReconstruction::TwoViewReconstruction(const Eigen::Matrix3f& k, float sigma, int iterations)
+// (cv::Mat& k, float sigma = 1.0, int iterations = 200)
+    TwoViewReconstruction::TwoViewReconstruction(cv::Mat& K, float sigma, int iterations)
     {
-        mK = k;
+        mK = K.clone();
 
         mSigma = sigma;
         mSigma2 = sigma*sigma;
         mMaxIterations = iterations;
     }
 
-    bool TwoViewReconstruction::Reconstruct(const std::vector<cv::KeyPoint>& vKeys1, const std::vector<cv::KeyPoint>& vKeys2, const vector<int> &vMatches12,
-                                             Sophus::SE3f &T21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated)
+
+
+/**************************特征点三角化构造地图点*******************
+ * 输入：vKeys1：初始帧特征点
+ *      vKeys2：当前帧特征点
+ *      vMatches12：初始图像帧到当前图像帧的匹配
+ *      R21、t21：初始图像帧到当前图像帧的位姿，即世界坐标系到当前图像坐标系
+ *               的位姿变换，输入为空，等待求解输出
+ *      vP3D：std::vector<cv::Point3f>待输出  进行三角化得到的空间点集合
+ *      vbTriangulated：vector<bool> vbTriangulated，等待输出，表示特征点
+ *                      是否进行了三角化
+****************************************************************/
+    bool TwoViewReconstruction::Reconstruct(const std::vector<cv::KeyPoint>& vKeys1,
+                                            const std::vector<cv::KeyPoint>& vKeys2,
+                                            const vector<int> &vMatches12,
+                                            cv::Mat &R21, cv::Mat &t21,
+                                            vector<cv::Point3f> &vP3D,
+                                            vector<bool> &vbTriangulated)
     {
         mvKeys1.clear();
         mvKeys2.clear();
 
-        mvKeys1 = vKeys1;
-        mvKeys2 = vKeys2;
+        mvKeys1 = vKeys1;  //初始图像帧的特征点
+        mvKeys2 = vKeys2;  //当前图像帧的特征点
 
         // Fill structures with current keypoints and matches with reference frame
         // Reference Frame: 1, Current Frame: 2
-        mvMatches12.clear();
-        mvMatches12.reserve(mvKeys2.size());
-        mvbMatched1.resize(mvKeys1.size());
+
+        mvMatches12.clear();  //类型：Match类向量,typedef std::pair<int,int> Match;
+        mvMatches12.reserve(mvKeys2.size());  //存储匹配成功的特征点，<参考帧特征点，当前帧特征点>
+        mvbMatched1.resize(mvKeys1.size());  //bool类向量，存储参考图像帧中的特征点的匹配是否成功
         for(size_t i=0, iend=vMatches12.size();i<iend; i++)
         {
             if(vMatches12[i]>=0)
@@ -63,47 +78,73 @@ namespace ORB_SLAM3
                 mvbMatched1[i]=false;
         }
 
+        //匹配成功的特征点对数
         const int N = mvMatches12.size();
 
         // Indices for minimum set selection
+        // 存储所有匹配成功的特征点对的索引
         vector<size_t> vAllIndices;
         vAllIndices.reserve(N);
-        vector<size_t> vAvailableIndices;
-
         for(int i=0; i<N; i++)
         {
             vAllIndices.push_back(i);
         }
 
+
+        vector<size_t> vAvailableIndices;
+
         // Generate sets of 8 points for each RANSAC iteration
+        // 为每次RANSAC迭代生成8个特征点
+        // RANSAC最大迭代次数：200
+        //mvSets：200列向量，每个向量中存储vector<size_t>类型的值，每个vector<size_t>是8个向量，初始化为0
         mvSets = vector< vector<size_t> >(mMaxIterations,vector<size_t>(8,0));
 
+        // 按照一定规律产生随机种子
         DUtils::Random::SeedRandOnce(0);
 
+        // 遍历200次
         for(int it=0; it<mMaxIterations; it++)
         {
+            //每次开始迭代，假定所有的特征点对可用，表示可用特征点对的索引ID
             vAvailableIndices = vAllIndices;
 
+            // 选择最小的样本集，使用8点法
             // Select a minimum set
             for(size_t j=0; j<8; j++)
             {
+                //随机生成一个特征点对的索引ID，范围在0到N-1中
                 int randi = DUtils::Random::RandomInt(0,vAvailableIndices.size()-1);
+                // idx索引被选中
                 int idx = vAvailableIndices[randi];
 
+                // 将本次迭代选中的点对索引添加进nvSets中
                 mvSets[it][j] = idx;
 
+                // 删除这个选中的索引，避免重复选择
                 vAvailableIndices[randi] = vAvailableIndices.back();
                 vAvailableIndices.pop_back();
             }
         }
 
         // Launch threads to compute in parallel a fundamental matrix and a homography
+        // vbMatchesInliersH，vbMatchesInliersF记录当前值是不是有效的
         vector<bool> vbMatchesInliersH, vbMatchesInliersF;
-        float SH, SF;
-        Eigen::Matrix3f H, F;
+        float SH, SF;  //计算H阵和F阵的得分
+        cv::Mat H, F;
 
-        thread threadH(&TwoViewReconstruction::FindHomography,this,ref(vbMatchesInliersH), ref(SH), ref(H));
-        thread threadF(&TwoViewReconstruction::FindFundamental,this,ref(vbMatchesInliersF), ref(SF), ref(F));
+        // 加速计算，开启线程
+        thread threadH(&TwoViewReconstruction::FindHomography,   //线程主函数
+                       this,
+                       ref(vbMatchesInliersH),   //输出，特征点对的inlier标记
+                       ref(SH),    //输出，单应矩阵的RANSAC评分
+                       ref(H));    //输出单应矩阵的计算结果
+
+        //基础矩阵
+        thread threadF(&TwoViewReconstruction::FindFundamental,
+                       this,
+                       ref(vbMatchesInliersF),
+                       ref(SF),
+                       ref(F));
 
         // Wait until both threads have finished
         threadH.join();
@@ -116,42 +157,67 @@ namespace ORB_SLAM3
         float minParallax = 1.0;
 
         // Try to reconstruct from homography or fundamental depending on the ratio (0.40-0.45)
+        //根据得分比例，选取某个模型
         if(RH>0.50) // if(RH>0.40)
         {
             //cout << "Initialization from Homography" << endl;
-            return ReconstructH(vbMatchesInliersH,H, mK,T21,vP3D,vbTriangulated,minParallax,50);
+            return ReconstructH(vbMatchesInliersH,H, mK,R21,t21,vP3D,vbTriangulated,minParallax,50);
         }
         else //if(pF_HF>0.6)
         {
             //cout << "Initialization from Fundamental" << endl;
-            return ReconstructF(vbMatchesInliersF,F,mK,T21,vP3D,vbTriangulated,minParallax,50);
+            return ReconstructF(vbMatchesInliersF,F,mK,R21,t21,vP3D,vbTriangulated,minParallax,50);
         }
     }
 
-    void TwoViewReconstruction::FindHomography(vector<bool> &vbMatchesInliers, float &score, Eigen::Matrix3f &H21)
+
+
+/*********************单应矩阵计算******************************
+ * vbMatchesInliers：标记是否是外点
+ * score:RANSAC得分
+ * H21：结果
+**************************************************************/
+    void TwoViewReconstruction::FindHomography(vector<bool> &vbMatchesInliers,
+                                               float &score,
+                                               cv::Mat &H21)
     {
+
+
         // Number of putative matches
+        // mvMatches12：存储匹配成功的特征点，<参考帧特征点，当前帧特征点>
+        // N：匹配成功的点对个数
         const int N = mvMatches12.size();
 
+        // 归一化坐标，用矩阵的形式表示
         // Normalize coordinates
-        vector<cv::Point2f> vPn1, vPn2;
-        Eigen::Matrix3f T1, T2;
+        // |sX  0  -meanx*sX|
+        // |0   sY -meany*sY|
+        // |0   0      1    |
+        vector<cv::Point2f> vPn1, vPn2;  //归一化特征点坐标
+        cv::Mat T1, T2;   //归一化特征点的变换矩阵
         Normalize(mvKeys1,vPn1, T1);
         Normalize(mvKeys2,vPn2, T2);
-        Eigen::Matrix3f T2inv = T2.inverse();
+        cv::Mat T2inv = T2.inv();
+
 
         // Best Results variables
-        score = 0.0;
-        vbMatchesInliers = vector<bool>(N,false);
+        score = 0.0;    //最佳分数
+        vbMatchesInliers = vector<bool>(N,false);  //初始化，容量为特征点对的个数，初始化为false
 
         // Iteration variables
+        //某次迭代中参考图像帧的特征点坐标
         vector<cv::Point2f> vPn1i(8);
+        //某次迭代中当前图像帧的特征点坐标
         vector<cv::Point2f> vPn2i(8);
-        Eigen::Matrix3f H21i, H12i;
+        // 某次迭代中计算出的H阵
+        cv::Mat H21i, H12i;
+
+        // 每次RANSAC记录Inlier得分
         vector<bool> vbCurrentInliers(N,false);
         float currentScore;
 
         // Perform all RANSAC iterations and save the solution with highest score
+        //开始迭代,计算归一化后的H阵，
         for(int it=0; it<mMaxIterations; it++)
         {
             // Select a minimum set
@@ -159,19 +225,24 @@ namespace ORB_SLAM3
             {
                 int idx = mvSets[it][j];
 
-                vPn1i[j] = vPn1[mvMatches12[idx].first];
-                vPn2i[j] = vPn2[mvMatches12[idx].second];
+                vPn1i[j] = vPn1[mvMatches12[idx].first];  //参考帧的归一化特征点
+                vPn2i[j] = vPn2[mvMatches12[idx].second]; //当前帧的归一化特征点
+
+
+
             }
 
-            Eigen::Matrix3f Hn = ComputeH21(vPn1i,vPn2i);
-            H21i = T2inv * Hn * T1;
-            H12i = H21i.inverse();
+            cv::Mat Hn = ComputeH21(vPn1i,vPn2i);  //利用8个点计算单应矩阵
+            //恢复归一化前的样子
+            H21i = T2inv*Hn*T1;
+            H12i = H21i.inv();
 
+            //计算得分，选择最好的模型
             currentScore = CheckHomography(H21i, H12i, vbCurrentInliers, mSigma);
 
             if(currentScore>score)
             {
-                H21 = H21i;
+                H21 = H21i.clone();
                 vbMatchesInliers = vbCurrentInliers;
                 score = currentScore;
             }
@@ -179,17 +250,17 @@ namespace ORB_SLAM3
     }
 
 
-    void TwoViewReconstruction::FindFundamental(vector<bool> &vbMatchesInliers, float &score, Eigen::Matrix3f &F21)
+    void TwoViewReconstruction::FindFundamental(vector<bool> &vbMatchesInliers, float &score, cv::Mat &F21)
     {
         // Number of putative matches
         const int N = vbMatchesInliers.size();
 
         // Normalize coordinates
         vector<cv::Point2f> vPn1, vPn2;
-        Eigen::Matrix3f T1, T2;
+        cv::Mat T1, T2;
         Normalize(mvKeys1,vPn1, T1);
         Normalize(mvKeys2,vPn2, T2);
-        Eigen::Matrix3f T2t = T2.transpose();
+        cv::Mat T2t = T2.t();
 
         // Best Results variables
         score = 0.0;
@@ -198,7 +269,7 @@ namespace ORB_SLAM3
         // Iteration variables
         vector<cv::Point2f> vPn1i(8);
         vector<cv::Point2f> vPn2i(8);
-        Eigen::Matrix3f F21i;
+        cv::Mat F21i;
         vector<bool> vbCurrentInliers(N,false);
         float currentScore;
 
@@ -214,26 +285,27 @@ namespace ORB_SLAM3
                 vPn2i[j] = vPn2[mvMatches12[idx].second];
             }
 
-            Eigen::Matrix3f Fn = ComputeF21(vPn1i,vPn2i);
+            cv::Mat Fn = ComputeF21(vPn1i,vPn2i);
 
-            F21i = T2t * Fn * T1;
+            F21i = T2t*Fn*T1;
 
             currentScore = CheckFundamental(F21i, vbCurrentInliers, mSigma);
 
             if(currentScore>score)
             {
-                F21 = F21i;
+                F21 = F21i.clone();
                 vbMatchesInliers = vbCurrentInliers;
                 score = currentScore;
             }
         }
     }
 
-    Eigen::Matrix3f TwoViewReconstruction::ComputeH21(const vector<cv::Point2f> &vP1, const vector<cv::Point2f> &vP2)
+
+    cv::Mat TwoViewReconstruction::ComputeH21(const vector<cv::Point2f> &vP1, const vector<cv::Point2f> &vP2)
     {
         const int N = vP1.size();
 
-        Eigen::MatrixXf A(2*N, 9);
+        cv::Mat A(2*N,9,CV_32F);
 
         for(int i=0; i<N; i++)
         {
@@ -242,40 +314,40 @@ namespace ORB_SLAM3
             const float u2 = vP2[i].x;
             const float v2 = vP2[i].y;
 
-            A(2*i,0) = 0.0;
-            A(2*i,1) = 0.0;
-            A(2*i,2) = 0.0;
-            A(2*i,3) = -u1;
-            A(2*i,4) = -v1;
-            A(2*i,5) = -1;
-            A(2*i,6) = v2*u1;
-            A(2*i,7) = v2*v1;
-            A(2*i,8) = v2;
+            A.at<float>(2*i,0) = 0.0;
+            A.at<float>(2*i,1) = 0.0;
+            A.at<float>(2*i,2) = 0.0;
+            A.at<float>(2*i,3) = -u1;
+            A.at<float>(2*i,4) = -v1;
+            A.at<float>(2*i,5) = -1;
+            A.at<float>(2*i,6) = v2*u1;
+            A.at<float>(2*i,7) = v2*v1;
+            A.at<float>(2*i,8) = v2;
 
-            A(2*i+1,0) = u1;
-            A(2*i+1,1) = v1;
-            A(2*i+1,2) = 1;
-            A(2*i+1,3) = 0.0;
-            A(2*i+1,4) = 0.0;
-            A(2*i+1,5) = 0.0;
-            A(2*i+1,6) = -u2*u1;
-            A(2*i+1,7) = -u2*v1;
-            A(2*i+1,8) = -u2;
+            A.at<float>(2*i+1,0) = u1;
+            A.at<float>(2*i+1,1) = v1;
+            A.at<float>(2*i+1,2) = 1;
+            A.at<float>(2*i+1,3) = 0.0;
+            A.at<float>(2*i+1,4) = 0.0;
+            A.at<float>(2*i+1,5) = 0.0;
+            A.at<float>(2*i+1,6) = -u2*u1;
+            A.at<float>(2*i+1,7) = -u2*v1;
+            A.at<float>(2*i+1,8) = -u2;
 
         }
 
-        Eigen::JacobiSVD<Eigen::MatrixXf> svd(A, Eigen::ComputeFullV);
+        cv::Mat u,w,vt;
 
-        Eigen::Matrix<float,3,3,Eigen::RowMajor> H(svd.matrixV().col(8).data());
+        cv::SVDecomp(A,w,u,vt,cv::SVD::MODIFY_A | cv::SVD::FULL_UV);
 
-        return H;
+        return vt.row(8).reshape(0, 3);
     }
 
-    Eigen::Matrix3f TwoViewReconstruction::ComputeF21(const vector<cv::Point2f> &vP1,const vector<cv::Point2f> &vP2)
+    cv::Mat TwoViewReconstruction::ComputeF21(const vector<cv::Point2f> &vP1,const vector<cv::Point2f> &vP2)
     {
         const int N = vP1.size();
 
-        Eigen::MatrixXf A(N, 9);
+        cv::Mat A(N,9,CV_32F);
 
         for(int i=0; i<N; i++)
         {
@@ -284,52 +356,53 @@ namespace ORB_SLAM3
             const float u2 = vP2[i].x;
             const float v2 = vP2[i].y;
 
-            A(i,0) = u2*u1;
-            A(i,1) = u2*v1;
-            A(i,2) = u2;
-            A(i,3) = v2*u1;
-            A(i,4) = v2*v1;
-            A(i,5) = v2;
-            A(i,6) = u1;
-            A(i,7) = v1;
-            A(i,8) = 1;
+            A.at<float>(i,0) = u2*u1;
+            A.at<float>(i,1) = u2*v1;
+            A.at<float>(i,2) = u2;
+            A.at<float>(i,3) = v2*u1;
+            A.at<float>(i,4) = v2*v1;
+            A.at<float>(i,5) = v2;
+            A.at<float>(i,6) = u1;
+            A.at<float>(i,7) = v1;
+            A.at<float>(i,8) = 1;
         }
 
-        Eigen::JacobiSVD<Eigen::MatrixXf> svd(A, Eigen::ComputeFullU | Eigen::ComputeFullV);
+        cv::Mat u,w,vt;
 
-        Eigen::Matrix<float,3,3,Eigen::RowMajor> Fpre(svd.matrixV().col(8).data());
+        cv::SVDecomp(A,w,u,vt,cv::SVD::MODIFY_A | cv::SVD::FULL_UV);
 
-        Eigen::JacobiSVD<Eigen::Matrix3f> svd2(Fpre, Eigen::ComputeFullU | Eigen::ComputeFullV);
+        cv::Mat Fpre = vt.row(8).reshape(0, 3);
 
-        Eigen::Vector3f w = svd2.singularValues();
-        w(2) = 0;
+        cv::SVDecomp(Fpre,w,u,vt,cv::SVD::MODIFY_A | cv::SVD::FULL_UV);
 
-        return svd2.matrixU() * Eigen::DiagonalMatrix<float,3>(w) * svd2.matrixV().transpose();
+        w.at<float>(2)=0;
+
+        return  u*cv::Mat::diag(w)*vt;
     }
 
-    float TwoViewReconstruction::CheckHomography(const Eigen::Matrix3f &H21, const Eigen::Matrix3f &H12, vector<bool> &vbMatchesInliers, float sigma)
+    float TwoViewReconstruction::CheckHomography(const cv::Mat &H21, const cv::Mat &H12, vector<bool> &vbMatchesInliers, float sigma)
     {
         const int N = mvMatches12.size();
 
-        const float h11 = H21(0,0);
-        const float h12 = H21(0,1);
-        const float h13 = H21(0,2);
-        const float h21 = H21(1,0);
-        const float h22 = H21(1,1);
-        const float h23 = H21(1,2);
-        const float h31 = H21(2,0);
-        const float h32 = H21(2,1);
-        const float h33 = H21(2,2);
+        const float h11 = H21.at<float>(0,0);
+        const float h12 = H21.at<float>(0,1);
+        const float h13 = H21.at<float>(0,2);
+        const float h21 = H21.at<float>(1,0);
+        const float h22 = H21.at<float>(1,1);
+        const float h23 = H21.at<float>(1,2);
+        const float h31 = H21.at<float>(2,0);
+        const float h32 = H21.at<float>(2,1);
+        const float h33 = H21.at<float>(2,2);
 
-        const float h11inv = H12(0,0);
-        const float h12inv = H12(0,1);
-        const float h13inv = H12(0,2);
-        const float h21inv = H12(1,0);
-        const float h22inv = H12(1,1);
-        const float h23inv = H12(1,2);
-        const float h31inv = H12(2,0);
-        const float h32inv = H12(2,1);
-        const float h33inv = H12(2,2);
+        const float h11inv = H12.at<float>(0,0);
+        const float h12inv = H12.at<float>(0,1);
+        const float h13inv = H12.at<float>(0,2);
+        const float h21inv = H12.at<float>(1,0);
+        const float h22inv = H12.at<float>(1,1);
+        const float h23inv = H12.at<float>(1,2);
+        const float h31inv = H12.at<float>(2,0);
+        const float h32inv = H12.at<float>(2,1);
+        const float h33inv = H12.at<float>(2,2);
 
         vbMatchesInliers.resize(N);
 
@@ -343,21 +416,23 @@ namespace ORB_SLAM3
         {
             bool bIn = true;
 
-            const cv::KeyPoint &kp1 = mvKeys1[mvMatches12[i].first];
-            const cv::KeyPoint &kp2 = mvKeys2[mvMatches12[i].second];
+            const cv::KeyPoint &kp1 = mvKeys1[mvMatches12[i].first];  //参考图像帧的特征点
+            const cv::KeyPoint &kp2 = mvKeys2[mvMatches12[i].second];  //当前图像帧的特征
 
-            const float u1 = kp1.pt.x;
+            const float u1 = kp1.pt.x; //参考图像帧的特征点坐标
             const float v1 = kp1.pt.y;
-            const float u2 = kp2.pt.x;
+            const float u2 = kp2.pt.x;  //当前图像帧的特征点坐标
             const float v2 = kp2.pt.y;
 
+            // p2=H21*p1
             // Reprojection error in first image
             // x2in1 = H12*x2
-
+            //当前图像帧的特征点投影至参考图像
             const float w2in1inv = 1.0/(h31inv*u2+h32inv*v2+h33inv);
             const float u2in1 = (h11inv*u2+h12inv*v2+h13inv)*w2in1inv;
             const float v2in1 = (h21inv*u2+h22inv*v2+h23inv)*w2in1inv;
 
+            // 投影距离
             const float squareDist1 = (u1-u2in1)*(u1-u2in1)+(v1-v2in1)*(v1-v2in1);
 
             const float chiSquare1 = squareDist1*invSigmaSquare;
@@ -369,7 +444,7 @@ namespace ORB_SLAM3
 
             // Reprojection error in second image
             // x1in2 = H21*x1
-
+            //参考图像帧的特征点投影至当前图像
             const float w1in2inv = 1.0/(h31*u1+h32*v1+h33);
             const float u1in2 = (h11*u1+h12*v1+h13)*w1in2inv;
             const float v1in2 = (h21*u1+h22*v1+h23)*w1in2inv;
@@ -392,19 +467,19 @@ namespace ORB_SLAM3
         return score;
     }
 
-    float TwoViewReconstruction::CheckFundamental(const Eigen::Matrix3f &F21, vector<bool> &vbMatchesInliers, float sigma)
+    float TwoViewReconstruction::CheckFundamental(const cv::Mat &F21, vector<bool> &vbMatchesInliers, float sigma)
     {
         const int N = mvMatches12.size();
 
-        const float f11 = F21(0,0);
-        const float f12 = F21(0,1);
-        const float f13 = F21(0,2);
-        const float f21 = F21(1,0);
-        const float f22 = F21(1,1);
-        const float f23 = F21(1,2);
-        const float f31 = F21(2,0);
-        const float f32 = F21(2,1);
-        const float f33 = F21(2,2);
+        const float f11 = F21.at<float>(0,0);
+        const float f12 = F21.at<float>(0,1);
+        const float f13 = F21.at<float>(0,2);
+        const float f21 = F21.at<float>(1,0);
+        const float f22 = F21.at<float>(1,1);
+        const float f23 = F21.at<float>(1,2);
+        const float f31 = F21.at<float>(2,0);
+        const float f32 = F21.at<float>(2,1);
+        const float f33 = F21.at<float>(2,2);
 
         vbMatchesInliers.resize(N);
 
@@ -472,25 +547,29 @@ namespace ORB_SLAM3
         return score;
     }
 
-    bool TwoViewReconstruction::ReconstructF(vector<bool> &vbMatchesInliers, Eigen::Matrix3f &F21, Eigen::Matrix3f &K,
-                                             Sophus::SE3f &T21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated, float minParallax, int minTriangulated)
+    bool TwoViewReconstruction::ReconstructF(vector<bool> &vbMatchesInliers, cv::Mat &F21, cv::Mat &K,
+                                             cv::Mat &R21, cv::Mat &t21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated, float minParallax, int minTriangulated)
     {
+        //统计当前内点个数
         int N=0;
         for(size_t i=0, iend = vbMatchesInliers.size() ; i<iend; i++)
             if(vbMatchesInliers[i])
                 N++;
 
-        // Compute Essential Matrix from Fundamental Matrix
-        Eigen::Matrix3f E21 = K.transpose() * F21 * K;
 
-        Eigen::Matrix3f R1, R2;
-        Eigen::Vector3f t;
+        // Compute Essential Matrix from Fundamental Matrix
+        // F = K^-T*E*K^-1
+        // E = K^T*F*K
+        cv::Mat E21 = K.t()*F21*K;
+
+        cv::Mat R1, R2, t;
 
         // Recover the 4 motion hypotheses
+        //SVD分解得到四种可能性
         DecomposeE(E21,R1,R2,t);
 
-        Eigen::Vector3f t1 = t;
-        Eigen::Vector3f t2 = -t;
+        cv::Mat t1=t;
+        cv::Mat t2=-t;
 
         // Reconstruct with the 4 hyphoteses and check
         vector<cv::Point3f> vP3D1, vP3D2, vP3D3, vP3D4;
@@ -503,6 +582,9 @@ namespace ORB_SLAM3
         int nGood4 = CheckRT(R2,t2,mvKeys1,mvKeys2,mvMatches12,vbMatchesInliers,K, vP3D4, 4.0*mSigma2, vbTriangulated4, parallax4);
 
         int maxGood = max(nGood1,max(nGood2,max(nGood3,nGood4)));
+
+        R21 = cv::Mat();
+        t21 = cv::Mat();
 
         int nMinGood = max(static_cast<int>(0.9*N),minTriangulated);
 
@@ -530,7 +612,8 @@ namespace ORB_SLAM3
                 vP3D = vP3D1;
                 vbTriangulated = vbTriangulated1;
 
-                T21 = Sophus::SE3f(R1, t1);
+                R1.copyTo(R21);
+                t1.copyTo(t21);
                 return true;
             }
         }else if(maxGood==nGood2)
@@ -540,7 +623,8 @@ namespace ORB_SLAM3
                 vP3D = vP3D2;
                 vbTriangulated = vbTriangulated2;
 
-                T21 = Sophus::SE3f(R2, t1);
+                R2.copyTo(R21);
+                t1.copyTo(t21);
                 return true;
             }
         }else if(maxGood==nGood3)
@@ -550,7 +634,8 @@ namespace ORB_SLAM3
                 vP3D = vP3D3;
                 vbTriangulated = vbTriangulated3;
 
-                T21 = Sophus::SE3f(R1, t2);
+                R1.copyTo(R21);
+                t2.copyTo(t21);
                 return true;
             }
         }else if(maxGood==nGood4)
@@ -560,7 +645,8 @@ namespace ORB_SLAM3
                 vP3D = vP3D4;
                 vbTriangulated = vbTriangulated4;
 
-                T21 = Sophus::SE3f(R2, t2);
+                R2.copyTo(R21);
+                t2.copyTo(t21);
                 return true;
             }
         }
@@ -568,8 +654,8 @@ namespace ORB_SLAM3
         return false;
     }
 
-    bool TwoViewReconstruction::ReconstructH(vector<bool> &vbMatchesInliers, Eigen::Matrix3f &H21, Eigen::Matrix3f &K,
-                                             Sophus::SE3f &T21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated, float minParallax, int minTriangulated)
+    bool TwoViewReconstruction::ReconstructH(vector<bool> &vbMatchesInliers, cv::Mat &H21, cv::Mat &K,
+                                             cv::Mat &R21, cv::Mat &t21, vector<cv::Point3f> &vP3D, vector<bool> &vbTriangulated, float minParallax, int minTriangulated)
     {
         int N=0;
         for(size_t i=0, iend = vbMatchesInliers.size() ; i<iend; i++)
@@ -579,28 +665,25 @@ namespace ORB_SLAM3
         // We recover 8 motion hypotheses using the method of Faugeras et al.
         // Motion and structure from motion in a piecewise planar environment.
         // International Journal of Pattern Recognition and Artificial Intelligence, 1988
-        Eigen::Matrix3f invK = K.inverse();
-        Eigen::Matrix3f A = invK * H21 * K;
+        cv::Mat invK = K.inv();
+        cv::Mat A = invK*H21*K;
 
-        Eigen::JacobiSVD<Eigen::Matrix3f> svd(A, Eigen::ComputeFullU | Eigen::ComputeFullV);
-        Eigen::Matrix3f U = svd.matrixU();
-        Eigen::Matrix3f V = svd.matrixV();
-        Eigen::Matrix3f Vt = V.transpose();
-        Eigen::Vector3f w = svd.singularValues();
+        cv::Mat U,w,Vt,V;
+        cv::SVD::compute(A,w,U,Vt,cv::SVD::FULL_UV);
+        V=Vt.t();
 
-        float s = U.determinant() * Vt.determinant();
+        float s = cv::determinant(U)*cv::determinant(Vt);
 
-        float d1 = w(0);
-        float d2 = w(1);
-        float d3 = w(2);
+        float d1 = w.at<float>(0);
+        float d2 = w.at<float>(1);
+        float d3 = w.at<float>(2);
 
         if(d1/d2<1.00001 || d2/d3<1.00001)
         {
             return false;
         }
 
-        vector<Eigen::Matrix3f> vR;
-        vector<Eigen::Vector3f> vt, vn;
+        vector<cv::Mat> vR, vt, vn;
         vR.reserve(8);
         vt.reserve(8);
         vn.reserve(8);
@@ -619,34 +702,32 @@ namespace ORB_SLAM3
 
         for(int i=0; i<4; i++)
         {
-            Eigen::Matrix3f Rp;
-            Rp.setZero();
-            Rp(0,0) = ctheta;
-            Rp(0,2) = -stheta[i];
-            Rp(1,1) = 1.f;
-            Rp(2,0) = stheta[i];
-            Rp(2,2) = ctheta;
+            cv::Mat Rp=cv::Mat::eye(3,3,CV_32F);
+            Rp.at<float>(0,0)=ctheta;
+            Rp.at<float>(0,2)=-stheta[i];
+            Rp.at<float>(2,0)=stheta[i];
+            Rp.at<float>(2,2)=ctheta;
 
-            Eigen::Matrix3f R = s*U*Rp*Vt;
+            cv::Mat R = s*U*Rp*Vt;
             vR.push_back(R);
 
-            Eigen::Vector3f tp;
-            tp(0) = x1[i];
-            tp(1) = 0;
-            tp(2) = -x3[i];
-            tp *= d1-d3;
+            cv::Mat tp(3,1,CV_32F);
+            tp.at<float>(0)=x1[i];
+            tp.at<float>(1)=0;
+            tp.at<float>(2)=-x3[i];
+            tp*=d1-d3;
 
-            Eigen::Vector3f t = U*tp;
-            vt.push_back(t / t.norm());
+            cv::Mat t = U*tp;
+            vt.push_back(t/cv::norm(t));
 
-            Eigen::Vector3f np;
-            np(0) = x1[i];
-            np(1) = 0;
-            np(2) = x3[i];
+            cv::Mat np(3,1,CV_32F);
+            np.at<float>(0)=x1[i];
+            np.at<float>(1)=0;
+            np.at<float>(2)=x3[i];
 
-            Eigen::Vector3f n = V*np;
-            if(n(2) < 0)
-                n = -n;
+            cv::Mat n = V*np;
+            if(n.at<float>(2)<0)
+                n=-n;
             vn.push_back(n);
         }
 
@@ -658,34 +739,33 @@ namespace ORB_SLAM3
 
         for(int i=0; i<4; i++)
         {
-            Eigen::Matrix3f Rp;
-            Rp.setZero();
-            Rp(0,0) = cphi;
-            Rp(0,2) = sphi[i];
-            Rp(1,1) = -1;
-            Rp(2,0) = sphi[i];
-            Rp(2,2) = -cphi;
+            cv::Mat Rp=cv::Mat::eye(3,3,CV_32F);
+            Rp.at<float>(0,0)=cphi;
+            Rp.at<float>(0,2)=sphi[i];
+            Rp.at<float>(1,1)=-1;
+            Rp.at<float>(2,0)=sphi[i];
+            Rp.at<float>(2,2)=-cphi;
 
-            Eigen::Matrix3f R = s*U*Rp*Vt;
+            cv::Mat R = s*U*Rp*Vt;
             vR.push_back(R);
 
-            Eigen::Vector3f tp;
-            tp(0) = x1[i];
-            tp(1) = 0;
-            tp(2) = x3[i];
-            tp *= d1+d3;
+            cv::Mat tp(3,1,CV_32F);
+            tp.at<float>(0)=x1[i];
+            tp.at<float>(1)=0;
+            tp.at<float>(2)=x3[i];
+            tp*=d1+d3;
 
-            Eigen::Vector3f t = U*tp;
-            vt.push_back(t / t.norm());
+            cv::Mat t = U*tp;
+            vt.push_back(t/cv::norm(t));
 
-            Eigen::Vector3f np;
-            np(0) = x1[i];
-            np(1) = 0;
-            np(2) = x3[i];
+            cv::Mat np(3,1,CV_32F);
+            np.at<float>(0)=x1[i];
+            np.at<float>(1)=0;
+            np.at<float>(2)=x3[i];
 
-            Eigen::Vector3f n = V*np;
-            if(n(2) < 0)
-                n = -n;
+            cv::Mat n = V*np;
+            if(n.at<float>(2)<0)
+                n=-n;
             vn.push_back(n);
         }
 
@@ -724,7 +804,9 @@ namespace ORB_SLAM3
 
         if(secondBestGood<0.75*bestGood && bestParallax>=minParallax && bestGood>minTriangulated && bestGood>0.9*N)
         {
-            T21 = Sophus::SE3f(vR[bestSolutionIdx], vt[bestSolutionIdx]);
+            vR[bestSolutionIdx].copyTo(R21);
+            vt[bestSolutionIdx].copyTo(t21);
+            vP3D = bestP3D;
             vbTriangulated = bestTriangulated;
 
             return true;
@@ -733,8 +815,22 @@ namespace ORB_SLAM3
         return false;
     }
 
+    void TwoViewReconstruction::Triangulate(const cv::KeyPoint &kp1, const cv::KeyPoint &kp2, const cv::Mat &P1, const cv::Mat &P2, cv::Mat &x3D)
+    {
+        cv::Mat A(4,4,CV_32F);
 
-    void TwoViewReconstruction::Normalize(const vector<cv::KeyPoint> &vKeys, vector<cv::Point2f> &vNormalizedPoints, Eigen::Matrix3f &T)
+        A.row(0) = kp1.pt.x*P1.row(2)-P1.row(0);
+        A.row(1) = kp1.pt.y*P1.row(2)-P1.row(1);
+        A.row(2) = kp2.pt.x*P2.row(2)-P2.row(0);
+        A.row(3) = kp2.pt.y*P2.row(2)-P2.row(1);
+
+        cv::Mat u,w,vt;
+        cv::SVD::compute(A,w,u,vt,cv::SVD::MODIFY_A| cv::SVD::FULL_UV);
+        x3D = vt.row(3).t();
+        x3D = x3D.rowRange(0,3)/x3D.at<float>(3);
+    }
+
+    void TwoViewReconstruction::Normalize(const vector<cv::KeyPoint> &vKeys, vector<cv::Point2f> &vNormalizedPoints, cv::Mat &T)
     {
         float meanX = 0;
         float meanY = 0;
@@ -775,23 +871,23 @@ namespace ORB_SLAM3
             vNormalizedPoints[i].y = vNormalizedPoints[i].y * sY;
         }
 
-        T.setZero();
-        T(0,0) = sX;
-        T(1,1) = sY;
-        T(0,2) = -meanX*sX;
-        T(1,2) = -meanY*sY;
-        T(2,2) = 1.f;
+        T = cv::Mat::eye(3,3,CV_32F);
+        T.at<float>(0,0) = sX;
+        T.at<float>(1,1) = sY;
+        T.at<float>(0,2) = -meanX*sX;
+        T.at<float>(1,2) = -meanY*sY;
     }
 
-    int TwoViewReconstruction::CheckRT(const Eigen::Matrix3f &R, const Eigen::Vector3f &t, const vector<cv::KeyPoint> &vKeys1, const vector<cv::KeyPoint> &vKeys2,
+
+    int TwoViewReconstruction::CheckRT(const cv::Mat &R, const cv::Mat &t, const vector<cv::KeyPoint> &vKeys1, const vector<cv::KeyPoint> &vKeys2,
                                        const vector<Match> &vMatches12, vector<bool> &vbMatchesInliers,
-                                       const Eigen::Matrix3f &K, vector<cv::Point3f> &vP3D, float th2, vector<bool> &vbGood, float &parallax)
+                                       const cv::Mat &K, vector<cv::Point3f> &vP3D, float th2, vector<bool> &vbGood, float &parallax)
     {
         // Calibration parameters
-        const float fx = K(0,0);
-        const float fy = K(1,1);
-        const float cx = K(0,2);
-        const float cy = K(1,2);
+        const float fx = K.at<float>(0,0);
+        const float fy = K.at<float>(1,1);
+        const float cx = K.at<float>(0,2);
+        const float cy = K.at<float>(1,2);
 
         vbGood = vector<bool>(vKeys1.size(),false);
         vP3D.resize(vKeys1.size());
@@ -800,20 +896,18 @@ namespace ORB_SLAM3
         vCosParallax.reserve(vKeys1.size());
 
         // Camera 1 Projection Matrix K[I|0]
-        Eigen::Matrix<float,3,4> P1;
-        P1.setZero();
-        P1.block<3,3>(0,0) = K;
+        cv::Mat P1(3,4,CV_32F,cv::Scalar(0));
+        K.copyTo(P1.rowRange(0,3).colRange(0,3));
 
-        Eigen::Vector3f O1;
-        O1.setZero();
+        cv::Mat O1 = cv::Mat::zeros(3,1,CV_32F);
 
         // Camera 2 Projection Matrix K[R|t]
-        Eigen::Matrix<float,3,4> P2;
-        P2.block<3,3>(0,0) = R;
-        P2.block<3,1>(0,3) = t;
-        P2 = K * P2;
+        cv::Mat P2(3,4,CV_32F);
+        R.copyTo(P2.rowRange(0,3).colRange(0,3));
+        t.copyTo(P2.rowRange(0,3).col(3));
+        P2 = K*P2;
 
-        Eigen::Vector3f O2 = -R.transpose() * t;
+        cv::Mat O2 = -R.t()*t;
 
         int nGood=0;
 
@@ -824,44 +918,40 @@ namespace ORB_SLAM3
 
             const cv::KeyPoint &kp1 = vKeys1[vMatches12[i].first];
             const cv::KeyPoint &kp2 = vKeys2[vMatches12[i].second];
+            cv::Mat p3dC1;
 
-            Eigen::Vector3f p3dC1;
-            Eigen::Vector3f x_p1(kp1.pt.x, kp1.pt.y, 1);
-            Eigen::Vector3f x_p2(kp2.pt.x, kp2.pt.y, 1);
+            Triangulate(kp1,kp2,P1,P2,p3dC1);
 
-            GeometricTools::Triangulate(x_p1, x_p2, P1, P2, p3dC1);
-
-
-            if(!isfinite(p3dC1(0)) || !isfinite(p3dC1(1)) || !isfinite(p3dC1(2)))
+            if(!isfinite(p3dC1.at<float>(0)) || !isfinite(p3dC1.at<float>(1)) || !isfinite(p3dC1.at<float>(2)))
             {
                 vbGood[vMatches12[i].first]=false;
                 continue;
             }
 
             // Check parallax
-            Eigen::Vector3f normal1 = p3dC1 - O1;
-            float dist1 = normal1.norm();
+            cv::Mat normal1 = p3dC1 - O1;
+            float dist1 = cv::norm(normal1);
 
-            Eigen::Vector3f normal2 = p3dC1 - O2;
-            float dist2 = normal2.norm();
+            cv::Mat normal2 = p3dC1 - O2;
+            float dist2 = cv::norm(normal2);
 
-            float cosParallax = normal1.dot(normal2) / (dist1*dist2);
+            float cosParallax = normal1.dot(normal2)/(dist1*dist2);
 
             // Check depth in front of first camera (only if enough parallax, as "infinite" points can easily go to negative depth)
-            if(p3dC1(2)<=0 && cosParallax<0.99998)
+            if(p3dC1.at<float>(2)<=0 && cosParallax<0.99998)
                 continue;
 
             // Check depth in front of second camera (only if enough parallax, as "infinite" points can easily go to negative depth)
-            Eigen::Vector3f p3dC2 = R * p3dC1 + t;
+            cv::Mat p3dC2 = R*p3dC1+t;
 
-            if(p3dC2(2)<=0 && cosParallax<0.99998)
+            if(p3dC2.at<float>(2)<=0 && cosParallax<0.99998)
                 continue;
 
             // Check reprojection error in first image
             float im1x, im1y;
-            float invZ1 = 1.0/p3dC1(2);
-            im1x = fx*p3dC1(0)*invZ1+cx;
-            im1y = fy*p3dC1(1)*invZ1+cy;
+            float invZ1 = 1.0/p3dC1.at<float>(2);
+            im1x = fx*p3dC1.at<float>(0)*invZ1+cx;
+            im1y = fy*p3dC1.at<float>(1)*invZ1+cy;
 
             float squareError1 = (im1x-kp1.pt.x)*(im1x-kp1.pt.x)+(im1y-kp1.pt.y)*(im1y-kp1.pt.y);
 
@@ -870,9 +960,9 @@ namespace ORB_SLAM3
 
             // Check reprojection error in second image
             float im2x, im2y;
-            float invZ2 = 1.0/p3dC2(2);
-            im2x = fx*p3dC2(0)*invZ2+cx;
-            im2y = fy*p3dC2(1)*invZ2+cy;
+            float invZ2 = 1.0/p3dC2.at<float>(2);
+            im2x = fx*p3dC2.at<float>(0)*invZ2+cx;
+            im2y = fy*p3dC2.at<float>(1)*invZ2+cy;
 
             float squareError2 = (im2x-kp2.pt.x)*(im2x-kp2.pt.x)+(im2y-kp2.pt.y)*(im2y-kp2.pt.y);
 
@@ -880,7 +970,7 @@ namespace ORB_SLAM3
                 continue;
 
             vCosParallax.push_back(cosParallax);
-            vP3D[vMatches12[i].first] = cv::Point3f(p3dC1(0), p3dC1(1), p3dC1(2));
+            vP3D[vMatches12[i].first] = cv::Point3f(p3dC1.at<float>(0),p3dC1.at<float>(1),p3dC1.at<float>(2));
             nGood++;
 
             if(cosParallax<0.99998)
@@ -900,30 +990,26 @@ namespace ORB_SLAM3
         return nGood;
     }
 
-    void TwoViewReconstruction::DecomposeE(const Eigen::Matrix3f &E, Eigen::Matrix3f &R1, Eigen::Matrix3f &R2, Eigen::Vector3f &t)
+    void TwoViewReconstruction::DecomposeE(const cv::Mat &E, cv::Mat &R1, cv::Mat &R2, cv::Mat &t)
     {
+        cv::Mat u,w,vt;
+        cv::SVD::compute(E,w,u,vt);
 
-        Eigen::JacobiSVD<Eigen::Matrix3f> svd(E, Eigen::ComputeFullU | Eigen::ComputeFullV);
+        u.col(2).copyTo(t);
+        t=t/cv::norm(t);
 
-        Eigen::Matrix3f U = svd.matrixU();
-        Eigen::Matrix3f Vt = svd.matrixV().transpose();
+        cv::Mat W(3,3,CV_32F,cv::Scalar(0));
+        W.at<float>(0,1)=-1;
+        W.at<float>(1,0)=1;
+        W.at<float>(2,2)=1;
 
-        t = U.col(2);
-        t = t / t.norm();
+        R1 = u*W*vt;
+        if(cv::determinant(R1)<0)
+            R1=-R1;
 
-        Eigen::Matrix3f W;
-        W.setZero();
-        W(0,1) = -1;
-        W(1,0) = 1;
-        W(2,2) = 1;
-
-        R1 = U * W * Vt;
-        if(R1.determinant() < 0)
-            R1 = -R1;
-
-        R2 = U * W.transpose() * Vt;
-        if(R2.determinant() < 0)
-            R2 = -R2;
+        R2 = u*W.t()*vt;
+        if(cv::determinant(R2)<0)
+            R2=-R2;
     }
 
 } //namespace ORB_SLAM

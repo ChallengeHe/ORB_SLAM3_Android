@@ -34,7 +34,6 @@
 
 namespace ORB_SLAM3
 {
-class Viewer;
 class Map;
 class MapPoint;
 class KeyFrame;
@@ -42,9 +41,6 @@ class KeyFrameDatabase;
 class Frame;
 class KannalaBrandt8;
 class Pinhole;
-
-//BOOST_CLASS_EXPORT_GUID(Pinhole, "Pinhole")
-//BOOST_CLASS_EXPORT_GUID(KannalaBrandt8, "KannalaBrandt8")
 
 class Atlas
 {
@@ -70,8 +66,6 @@ class Atlas
     }
 
 public:
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-
     Atlas();
     Atlas(int initKFid); // When its initialization the first map is created
     ~Atlas();
@@ -81,16 +75,11 @@ public:
 
     unsigned long int GetLastInitKFid();
 
-    void SetViewer(Viewer* pViewer);
-
     // Method for change components in the current map
     void AddKeyFrame(KeyFrame* pKF);
     void AddMapPoint(MapPoint* pMP);
-    //void EraseMapPoint(MapPoint* pMP);
-    //void EraseKeyFrame(KeyFrame* pKF);
 
-    GeometricCamera* AddCamera(GeometricCamera* pCam);
-    std::vector<GeometricCamera*> GetAllCameras();
+    void AddCamera(GeometricCamera* pCam);
 
     /* All methods without Map pointer work on current map */
     void SetReferenceMapPoints(const std::vector<MapPoint*> &vpMPs);
@@ -127,8 +116,6 @@ public:
     void PreSave();
     void PostLoad();
 
-    map<long unsigned int, KeyFrame*> GetAtlasKeyframes();
-
     void SetKeyFrameDababase(KeyFrameDatabase* pKFDB);
     KeyFrameDatabase* GetKeyFrameDatabase();
 
@@ -149,18 +136,16 @@ protected:
     Map* mpCurrentMap;
 
     std::vector<GeometricCamera*> mvpCameras;
+    std::vector<KannalaBrandt8*> mvpBackupCamKan;
+    std::vector<Pinhole*> mvpBackupCamPin;
+
+    std::mutex mMutexAtlas;
 
     unsigned long int mnLastInitKFidMap;
-
-    Viewer* mpViewer;
-    bool mHasViewer;
 
     // Class references for the map reconstruction from the save file
     KeyFrameDatabase* mpKeyFrameDB;
     ORBVocabulary* mpORBVocabulary;
-
-    // Mutex
-    std::mutex mMutexAtlas;
 
 
 }; // class Atlas

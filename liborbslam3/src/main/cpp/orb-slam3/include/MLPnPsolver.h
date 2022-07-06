@@ -1,7 +1,7 @@
 /**
 * This file is part of ORB-SLAM3
 *
-* Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+* Copyright (C) 2017-2020 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 * Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 *
 * ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
@@ -55,11 +55,11 @@
 #include<Eigen/Dense>
 #include<Eigen/Sparse>
 
-namespace ORB_SLAM3{
-    class MLPnPsolver {
+namespace ORB_SLAM3
+{
+    class MLPnPsolver
+    {
     public:
-        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-
         MLPnPsolver(const Frame &F, const vector<MapPoint*> &vpMapPointMatches);
 
         ~MLPnPsolver();
@@ -69,7 +69,7 @@ namespace ORB_SLAM3{
 
         //Find metod is necessary?
 
-        bool iterate(int nIterations, bool &bNoMore, vector<bool> &vbInliers, int &nInliers, Eigen::Matrix4f &Tout);
+        cv::Mat iterate(int nIterations, bool &bNoMore, vector<bool> &vbInliers, int &nInliers);
 
         //Type definitions needed by the original code
 
@@ -90,6 +90,7 @@ namespace ORB_SLAM3{
         typedef Eigen::Matrix3d cov3_mat_t;
 
         /** An array of 3D covariance matrices */
+        //Eigen::Matrix3d = cov3_mat_t
         typedef std::vector<cov3_mat_t, Eigen::aligned_allocator<cov3_mat_t> >
                 cov3_mats_t;
 
@@ -157,12 +158,12 @@ namespace ORB_SLAM3{
                 bool getJacs);
 
         void mlpnpJacs(
-            const point_t& pt,
-            const Eigen::Vector3d& nullspace_r,
-            const Eigen::Vector3d& nullspace_s,
-            const rodrigues_t& w,
-            const translation_t& t,
-            Eigen::MatrixXd& jacs);
+                const point_t& pt,
+                const Eigen::Vector3d& nullspace_r,
+                const Eigen::Vector3d& nullspace_s,
+                const rodrigues_t& w,
+                const translation_t& t,
+                Eigen::MatrixXd& jacs);
 
         //Auxiliar methods
 
@@ -204,7 +205,7 @@ namespace ORB_SLAM3{
         // Current Estimation
         double mRi[3][3];
         double mti[3];
-        Eigen::Matrix4f mTcwi;
+        cv::Mat mTcwi;
         vector<bool> mvbInliersi;
         int mnInliersi;
 
@@ -212,10 +213,10 @@ namespace ORB_SLAM3{
         int mnIterations;
         vector<bool> mvbBestInliers;
         int mnBestInliers;
-        Eigen::Matrix4f mBestTcw;
+        cv::Mat mBestTcw;
 
         // Refined
-        Eigen::Matrix4f mRefinedTcw;
+        cv::Mat mRefinedTcw;
         vector<bool> mvbRefinedInliers;
         int mnRefinedInliers;
 
@@ -247,6 +248,7 @@ namespace ORB_SLAM3{
         vector<float> mvMaxError;
 
         GeometricCamera* mpCamera;
+
     };
 
 }

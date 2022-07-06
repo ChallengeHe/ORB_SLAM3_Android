@@ -1,7 +1,7 @@
 /**
 * This file is part of ORB-SLAM3
 *
-* Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+* Copyright (C) 2017-2020 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 * Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 *
 * ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
@@ -24,7 +24,6 @@
 #include "KeyFrame.h"
 
 #include <set>
-#include <pangolin/pangolin.h>
 #include <mutex>
 
 #include <boost/serialization/base_object.hpp>
@@ -33,175 +32,172 @@
 namespace ORB_SLAM3
 {
 
-class MapPoint;
-class KeyFrame;
-class Atlas;
-class KeyFrameDatabase;
+    class MapPoint;
+    class KeyFrame;
+    class Atlas;
+    class KeyFrameDatabase;
 
-class Map
-{
-    friend class boost::serialization::access;
-
-    template<class Archive>
-    void serialize(Archive &ar, const unsigned int version)
+    class Map
     {
-        ar & mnId;
-        ar & mnInitKFid;
-        ar & mnMaxKFid;
-        ar & mnBigChangeIdx;
+        friend class boost::serialization::access;
 
-        // Save/load a set structure, the set structure is broken in libboost 1.58 for ubuntu 16.04, a vector is serializated
-        //ar & mspKeyFrames;
-        //ar & mspMapPoints;
-        ar & mvpBackupKeyFrames;
-        ar & mvpBackupMapPoints;
+        template<class Archive>
+        void serialize(Archive &ar, const unsigned int version)
+        {
+            ar & mnId;
+            ar & mnInitKFid;
+            ar & mnMaxKFid;
+            ar & mnBigChangeIdx;
+            // Set of KeyFrames and MapPoints, in this version the set serializator is not working
+            //ar & mspKeyFrames;
+            //ar & mspMapPoints;
 
-        ar & mvBackupKeyFrameOriginsId;
+            ar & mvpBackupKeyFrames;
+            ar & mvpBackupMapPoints;
 
-        ar & mnBackupKFinitialID;
-        ar & mnBackupKFlowerID;
+            ar & mvBackupKeyFrameOriginsId;
 
-        ar & mbImuInitialized;
-        ar & mbIsInertial;
-        ar & mbIMU_BA1;
-        ar & mbIMU_BA2;
-    }
+            ar & mnBackupKFinitialID;
+            ar & mnBackupKFlowerID;
 
-public:
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    Map();
-    Map(int initKFid);
-    ~Map();
+            ar & mbImuInitialized;
+            ar & mbIsInertial;
+            ar & mbIMU_BA1;
+            ar & mbIMU_BA2;
 
-    void AddKeyFrame(KeyFrame* pKF);
-    void AddMapPoint(MapPoint* pMP);
-    void EraseMapPoint(MapPoint* pMP);
-    void EraseKeyFrame(KeyFrame* pKF);
-    void SetReferenceMapPoints(const std::vector<MapPoint*> &vpMPs);
-    void InformNewBigChange();
-    int GetLastBigChangeIdx();
+            ar & mnInitKFid;
+            ar & mnMaxKFid;
+            ar & mnLastLoopKFid;
+        }
 
-    std::vector<KeyFrame*> GetAllKeyFrames();
-    std::vector<MapPoint*> GetAllMapPoints();
-    std::vector<MapPoint*> GetReferenceMapPoints();
+    public:
+        Map();
+        Map(int initKFid);
+        ~Map();
 
-    long unsigned int MapPointsInMap();
-    long unsigned  KeyFramesInMap();
+        void AddKeyFrame(KeyFrame* pKF);
+        void AddMapPoint(MapPoint* pMP);
+        void EraseMapPoint(MapPoint* pMP);
+        void EraseKeyFrame(KeyFrame* pKF);
+        void SetReferenceMapPoints(const std::vector<MapPoint*> &vpMPs);
+        void InformNewBigChange();
+        int GetLastBigChangeIdx();
 
-    long unsigned int GetId();
+        std::vector<KeyFrame*> GetAllKeyFrames();
+        std::vector<MapPoint*> GetAllMapPoints();
+        std::vector<MapPoint*> GetReferenceMapPoints();
 
-    long unsigned int GetInitKFid();
-    void SetInitKFid(long unsigned int initKFif);
-    long unsigned int GetMaxKFid();
+        long unsigned int MapPointsInMap();
+        long unsigned  KeyFramesInMap();
 
-    KeyFrame* GetOriginKF();
+        long unsigned int GetId();
 
-    void SetCurrentMap();
-    void SetStoredMap();
+        long unsigned int GetInitKFid();
+        void SetInitKFid(long unsigned int initKFif);
+        long unsigned int GetMaxKFid();
 
-    bool HasThumbnail();
-    bool IsInUse();
+        KeyFrame* GetOriginKF();
 
-    void SetBad();
-    bool IsBad();
+        void SetCurrentMap();
+        void SetStoredMap();
 
-    void clear();
+        bool HasThumbnail();
+        bool IsInUse();
 
-    int GetMapChangeIndex();
-    void IncreaseChangeIndex();
-    int GetLastMapChange();
-    void SetLastMapChange(int currentChangeId);
+        void SetBad();
+        bool IsBad();
 
-    void SetImuInitialized();
-    bool isImuInitialized();
+        void clear();
 
-    void ApplyScaledRotation(const Sophus::SE3f &T, const float s, const bool bScaledVel=false);
+        int GetMapChangeIndex();
+        void IncreaseChangeIndex();
+        int GetLastMapChange();
+        void SetLastMapChange(int currentChangeId);
 
-    void SetInertialSensor();
-    bool IsInertial();
-    void SetIniertialBA1();
-    void SetIniertialBA2();
-    bool GetIniertialBA1();
-    bool GetIniertialBA2();
+        void SetImuInitialized();
+        bool isImuInitialized();
 
-    void PrintEssentialGraph();
-    bool CheckEssentialGraph();
-    void ChangeId(long unsigned int nId);
+        void RotateMap(const cv::Mat &R);
+        void ApplyScaledRotation(const cv::Mat &R, const float s, const bool bScaledVel=false, const cv::Mat t=cv::Mat::zeros(cv::Size(1,3),CV_32F));
 
-    unsigned int GetLowerKFID();
+        void SetInertialSensor();
+        bool IsInertial();
+        void SetIniertialBA1();
+        void SetIniertialBA2();
+        bool GetIniertialBA1();
+        bool GetIniertialBA2();
 
-    void PreSave(std::set<GeometricCamera*> &spCams);
-    void PostLoad(KeyFrameDatabase* pKFDB, ORBVocabulary* pORBVoc/*, map<long unsigned int, KeyFrame*>& mpKeyFrameId*/, map<unsigned int, GeometricCamera*> &mpCams);
+        void PrintEssentialGraph();
+        bool CheckEssentialGraph();
+        void ChangeId(long unsigned int nId);
 
-    void printReprojectionError(list<KeyFrame*> &lpLocalWindowKFs, KeyFrame* mpCurrentKF, string &name, string &name_folder);
+        unsigned int GetLowerKFID();
 
-    vector<KeyFrame*> mvpKeyFrameOrigins;
-    vector<unsigned long int> mvBackupKeyFrameOriginsId;
-    KeyFrame* mpFirstRegionKF;
-    std::mutex mMutexMapUpdate;
+        void PreSave(std::set<GeometricCamera*> &spCams);
+        void PostLoad(KeyFrameDatabase* pKFDB, ORBVocabulary* pORBVoc, map<long unsigned int, KeyFrame*>& mpKeyFrameId, map<unsigned int, GeometricCamera*> &mpCams);
 
-    // This avoid that two points are created simultaneously in separate threads (id conflict)
-    std::mutex mMutexPointCreation;
+        void printReprojectionError(list<KeyFrame*> &lpLocalWindowKFs, KeyFrame* mpCurrentKF, string &name, string &name_folder);
 
-    bool mbFail;
+        vector<KeyFrame*> mvpKeyFrameOrigins;
+        vector<unsigned long int> mvBackupKeyFrameOriginsId;
+        KeyFrame* mpFirstRegionKF;
+        std::mutex mMutexMapUpdate;
 
-    // Size of the thumbnail (always in power of 2)
-    static const int THUMB_WIDTH = 512;
-    static const int THUMB_HEIGHT = 512;
+        // This avoid that two points are created simultaneously in separate threads (id conflict)
+        std::mutex mMutexPointCreation;
 
-    static long unsigned int nNextId;
+        bool mbFail;
 
-    // DEBUG: show KFs which are used in LBA
-    std::set<long unsigned int> msOptKFs;
-    std::set<long unsigned int> msFixedKFs;
+        // Size of the thumbnail (always in power of 2)
+        static const int THUMB_WIDTH = 512;
+        static const int THUMB_HEIGHT = 512;
 
-protected:
+        static long unsigned int nNextId;
 
-    long unsigned int mnId;
+    protected:
 
-    std::set<MapPoint*> mspMapPoints;
-    std::set<KeyFrame*> mspKeyFrames;
+        long unsigned int mnId;
 
-    // Save/load, the set structure is broken in libboost 1.58 for ubuntu 16.04, a vector is serializated
-    std::vector<MapPoint*> mvpBackupMapPoints;
-    std::vector<KeyFrame*> mvpBackupKeyFrames;
+        std::set<MapPoint*> mspMapPoints;
+        std::set<KeyFrame*> mspKeyFrames;
 
-    KeyFrame* mpKFinitial;
-    KeyFrame* mpKFlowerID;
+        std::vector<MapPoint*> mvpBackupMapPoints;
+        std::vector<KeyFrame*> mvpBackupKeyFrames;
 
-    unsigned long int mnBackupKFinitialID;
-    unsigned long int mnBackupKFlowerID;
+        KeyFrame* mpKFinitial;
+        KeyFrame* mpKFlowerID;
 
-    std::vector<MapPoint*> mvpReferenceMapPoints;
+        unsigned long int mnBackupKFinitialID;
+        unsigned long int mnBackupKFlowerID;
 
-    bool mbImuInitialized;
+        std::vector<MapPoint*> mvpReferenceMapPoints;
 
-    int mnMapChange;
-    int mnMapChangeNotified;
+        bool mbImuInitialized;
 
-    long unsigned int mnInitKFid;
-    long unsigned int mnMaxKFid;
-    //long unsigned int mnLastLoopKFid;
+        int mnMapChange;
+        int mnMapChangeNotified;
 
-    // Index related to a big change in the map (loop closure, global BA)
-    int mnBigChangeIdx;
+        long unsigned int mnInitKFid;
+        long unsigned int mnMaxKFid;
+        long unsigned int mnLastLoopKFid;
+
+        // Index related to a big change in the map (loop closure, global BA)
+        int mnBigChangeIdx;
 
 
-    // View of the map in aerial sight (for the AtlasViewer)
-    GLubyte* mThumbnail;
+        // View of the map in aerial sight (for the AtlasViewer)
+        unsigned char* mThumbnail;
 
-    bool mIsInUse;
-    bool mHasTumbnail;
-    bool mbBad = false;
+        bool mIsInUse;
+        bool mHasTumbnail;
+        bool mbBad = false;
 
-    bool mbIsInertial;
-    bool mbIMU_BA1;
-    bool mbIMU_BA2;
+        bool mbIsInertial;
+        bool mbIMU_BA1;
+        bool mbIMU_BA2;
 
-    // Mutex
-    std::mutex mMutexMap;
-
-};
+        std::mutex mMutexMap;
+    };
 
 } //namespace ORB_SLAM3
 

@@ -1,7 +1,7 @@
 /**
 * This file is part of ORB-SLAM3
 *
-* Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+* Copyright (C) 2017-2020 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 * Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 *
 * ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
@@ -17,405 +17,522 @@
 */
 
 #include "ImuTypes.h"
-#include "Converter.h"
-
-#include "GeometricTools.h"
-
 #include<iostream>
-
+#include <fstream>
+using namespace std;
 namespace ORB_SLAM3
 {
 
-namespace IMU
-{
-
-const float eps = 1e-4;
-
-Eigen::Matrix3f NormalizeRotation(const Eigen::Matrix3f &R){
-    Eigen::JacobiSVD<Eigen::Matrix3f> svd(R, Eigen::ComputeFullU | Eigen::ComputeFullV);
-    return svd.matrixU() * svd.matrixV().transpose();
-}
-
-Eigen::Matrix3f RightJacobianSO3(const float &x, const float &y, const float &z)
-{
-    Eigen::Matrix3f I;
-    I.setIdentity();
-    const float d2 = x*x+y*y+z*z;
-    const float d = sqrt(d2);
-    Eigen::Vector3f v;
-    v << x, y, z;
-    Eigen::Matrix3f W = Sophus::SO3f::hat(v);
-    if(d<eps) {
-        return I;
-    }
-    else {
-        return I - W*(1.0f-cos(d))/d2 + W*W*(d-sin(d))/(d2*d);
-    }
-}
-
-Eigen::Matrix3f RightJacobianSO3(const Eigen::Vector3f &v)
-{
-    return RightJacobianSO3(v(0),v(1),v(2));
-}
-
-Eigen::Matrix3f InverseRightJacobianSO3(const float &x, const float &y, const float &z)
-{
-    Eigen::Matrix3f I;
-    I.setIdentity();
-    const float d2 = x*x+y*y+z*z;
-    const float d = sqrt(d2);
-    Eigen::Vector3f v;
-    v << x, y, z;
-    Eigen::Matrix3f W = Sophus::SO3f::hat(v);
-
-    if(d<eps) {
-        return I;
-    }
-    else {
-        return I + W/2 + W*W*(1.0f/d2 - (1.0f+cos(d))/(2.0f*d*sin(d)));
-    }
-}
-
-Eigen::Matrix3f InverseRightJacobianSO3(const Eigen::Vector3f &v)
-{
-    return InverseRightJacobianSO3(v(0),v(1),v(2));
-}
-
-IntegratedRotation::IntegratedRotation(const Eigen::Vector3f &angVel, const Bias &imuBias, const float &time) {
-    const float x = (angVel(0)-imuBias.bwx)*time;
-    const float y = (angVel(1)-imuBias.bwy)*time;
-    const float z = (angVel(2)-imuBias.bwz)*time;
-
-    const float d2 = x*x+y*y+z*z;
-    const float d = sqrt(d2);
-
-    Eigen::Vector3f v;
-    v << x, y, z;
-    Eigen::Matrix3f W = Sophus::SO3f::hat(v);
-    if(d<eps)
+    namespace IMU
     {
-        deltaR = Eigen::Matrix3f::Identity() + W;
-        rightJ = Eigen::Matrix3f::Identity();
-    }
-    else
-    {
-        deltaR = Eigen::Matrix3f::Identity() + W*sin(d)/d + W*W*(1.0f-cos(d))/d2;
-        rightJ = Eigen::Matrix3f::Identity() - W*(1.0f-cos(d))/d2 + W*W*(d-sin(d))/(d2*d);
-    }
-}
 
-Preintegrated::Preintegrated(const Bias &b_, const Calib &calib)
-{
-    Nga = calib.Cov;
-    NgaWalk = calib.CovWalk;
-    Initialize(b_);
-}
+        const float eps = 1e-4;
+
+        cv::Mat NormalizeRotation(const cv::Mat &R)
+        {
+            cv::Mat U,w,Vt;
+            cv::SVDecomp(R,w,U,Vt,cv::SVD::FULL_UV);
+            // assert(cv::determinant(U*Vt)>0);
+            return U*Vt;
+        }
+
+        cv::Mat Skew(const cv::Mat &v)
+        {
+            const float x = v.at<float>(0);
+            const float y = v.at<float>(1);
+            const float z = v.at<float>(2);
+            return (cv::Mat_<float>(3,3) << 0, -z, y,
+                    z, 0, -x,
+                    -y,  x, 0);
+        }
+
+        cv::Mat ExpSO3(const float &x, const float &y, const float &z)
+        {
+            cv::Mat I = cv::Mat::eye(3,3,CV_32F);
+            const float d2 = x*x+y*y+z*z;
+            const float d = sqrt(d2);
+            cv::Mat W = (cv::Mat_<float>(3,3) << 0, -z, y,
+                    z, 0, -x,
+                    -y,  x, 0);
+            if(d<eps)
+                return (I + W + 0.5f*W*W);
+            else
+                return (I + W*sin(d)/d + W*W*(1.0f-cos(d))/d2);
+        }
+
+        Eigen::Matrix<double,3,3> ExpSO3(const double &x, const double &y, const double &z)
+        {
+            Eigen::Matrix<double,3,3> I = Eigen::MatrixXd::Identity(3,3);
+            const double d2 = x*x+y*y+z*z;
+            const double d = sqrt(d2);
+            Eigen::Matrix<double,3,3> W;
+            W(0,0) = 0;
+            W(0,1) = -z;
+            W(0,2) = y;
+            W(1,0) = z;
+            W(1,1) = 0;
+            W(1,2) = -x;
+            W(2,0) = -y;
+            W(2,1) = x;
+            W(2,2) = 0;
+
+            if(d<eps)
+                return (I + W + 0.5*W*W);
+            else
+                return (I + W*sin(d)/d + W*W*(1.0-cos(d))/d2);
+        }
+
+        cv::Mat ExpSO3(const cv::Mat &v)
+        {
+            return ExpSO3(v.at<float>(0),v.at<float>(1),v.at<float>(2));
+        }
+
+        cv::Mat LogSO3(const cv::Mat &R)
+        {
+            const float tr = R.at<float>(0,0)+R.at<float>(1,1)+R.at<float>(2,2);
+            cv::Mat w = (cv::Mat_<float>(3,1) <<(R.at<float>(2,1)-R.at<float>(1,2))/2,
+                    (R.at<float>(0,2)-R.at<float>(2,0))/2,
+                    (R.at<float>(1,0)-R.at<float>(0,1))/2);
+            const float costheta = (tr-1.0f)*0.5f;
+            if(costheta>1 || costheta<-1)
+                return w;
+            const float theta = acos(costheta);
+            const float s = sin(theta);
+            if(fabs(s)<eps)
+                return w;
+            else
+                return theta*w/s;
+        }
+
+        cv::Mat RightJacobianSO3(const float &x, const float &y, const float &z)
+        {
+            cv::Mat I = cv::Mat::eye(3,3,CV_32F);
+            const float d2 = x*x+y*y+z*z;
+            const float d = sqrt(d2);
+            cv::Mat W = (cv::Mat_<float>(3,3) << 0, -z, y,
+                    z, 0, -x,
+                    -y,  x, 0);
+            if(d<eps)
+            {
+                return cv::Mat::eye(3,3,CV_32F);
+            }
+            else
+            {
+                return I - W*(1.0f-cos(d))/d2 + W*W*(d-sin(d))/(d2*d);
+            }
+        }
+
+        cv::Mat RightJacobianSO3(const cv::Mat &v)
+        {
+            return RightJacobianSO3(v.at<float>(0),v.at<float>(1),v.at<float>(2));
+        }
+
+        cv::Mat InverseRightJacobianSO3(const float &x, const float &y, const float &z)
+        {
+            cv::Mat I = cv::Mat::eye(3,3,CV_32F);
+            const float d2 = x*x+y*y+z*z;
+            const float d = sqrt(d2);
+            cv::Mat W = (cv::Mat_<float>(3,3) << 0, -z, y,
+                    z, 0, -x,
+                    -y,  x, 0);
+            if(d<eps)
+            {
+                return cv::Mat::eye(3,3,CV_32F);
+            }
+            else
+            {
+                return I + W/2 + W*W*(1.0f/d2 - (1.0f+cos(d))/(2.0f*d*sin(d)));
+            }
+        }
+
+        cv::Mat InverseRightJacobianSO3(const cv::Mat &v)
+        {
+            return InverseRightJacobianSO3(v.at<float>(0),v.at<float>(1),v.at<float>(2));
+        }
+
+
+        IntegratedRotation::IntegratedRotation(const cv::Point3f &angVel, const Bias &imuBias, const float &time):
+                deltaT(time)
+        {
+            //单位时间内的旋转 ，xyz构成旋转向量 角速度乘时间
+            const float x = (angVel.x-imuBias.bwx)*time;
+            const float y = (angVel.y-imuBias.bwy)*time;
+            const float z = (angVel.z-imuBias.bwz)*time;
+
+            cv::Mat I = cv::Mat::eye(3,3,CV_32F);
+
+            //计算旋转矩阵的模值
+            const float d2 = x*x+y*y+z*z;
+            const float d = sqrt(d2);
+
+            cv::Mat W = (cv::Mat_<float>(3,3) << 0, -z, y,
+                    z, 0, -x,
+                    -y,  x, 0);
+            if(d<eps)  //若旋转较小，旋转向量到旋转矩阵的变换采用指数一阶近似
+            {
+                deltaR = I + W; //forster 经典预积分论文公式（4）
+                //小量时，右扰动 Jr = I
+                rightJ = cv::Mat::eye(3,3,CV_32F);
+            }
+            else
+            {   //forster 经典预积分论文公式（3）
+                deltaR = I + W*sin(d)/d + W*W*(1.0f-cos(d))/d2;
+                //forster 经典预积分论文公式（8）
+                rightJ = I - W*(1.0f-cos(d))/d2 + W*W*(d-sin(d))/(d2*d);
+            }
+        }
+
+        Preintegrated::Preintegrated(const Bias &b_, const Calib &calib)
+        {
+            Nga = calib.Cov.clone();
+            NgaWalk = calib.CovWalk.clone();
+            Initialize(b_);
+        }
 
 // Copy constructor
-Preintegrated::Preintegrated(Preintegrated* pImuPre): dT(pImuPre->dT),C(pImuPre->C), Info(pImuPre->Info),
-     Nga(pImuPre->Nga), NgaWalk(pImuPre->NgaWalk), b(pImuPre->b), dR(pImuPre->dR), dV(pImuPre->dV),
-    dP(pImuPre->dP), JRg(pImuPre->JRg), JVg(pImuPre->JVg), JVa(pImuPre->JVa), JPg(pImuPre->JPg), JPa(pImuPre->JPa),
-    avgA(pImuPre->avgA), avgW(pImuPre->avgW), bu(pImuPre->bu), db(pImuPre->db), mvMeasurements(pImuPre->mvMeasurements)
-{
+        Preintegrated::Preintegrated(Preintegrated* pImuPre): dT(pImuPre->dT), C(pImuPre->C.clone()), Info(pImuPre->Info.clone()),
+                                                              Nga(pImuPre->Nga.clone()), NgaWalk(pImuPre->NgaWalk.clone()), b(pImuPre->b), dR(pImuPre->dR.clone()), dV(pImuPre->dV.clone()),
+                                                              dP(pImuPre->dP.clone()), JRg(pImuPre->JRg.clone()), JVg(pImuPre->JVg.clone()), JVa(pImuPre->JVa.clone()), JPg(pImuPre->JPg.clone()),
+                                                              JPa(pImuPre->JPa.clone()), avgA(pImuPre->avgA.clone()), avgW(pImuPre->avgW.clone()), bu(pImuPre->bu), db(pImuPre->db.clone()), mvMeasurements(pImuPre->mvMeasurements)
+        {
 
-}
+        }
 
-void Preintegrated::CopyFrom(Preintegrated* pImuPre)
-{
-    dT = pImuPre->dT;
-    C = pImuPre->C;
-    Info = pImuPre->Info;
-    Nga = pImuPre->Nga;
-    NgaWalk = pImuPre->NgaWalk;
-    b.CopyFrom(pImuPre->b);
-    dR = pImuPre->dR;
-    dV = pImuPre->dV;
-    dP = pImuPre->dP;
-    JRg = pImuPre->JRg;
-    JVg = pImuPre->JVg;
-    JVa = pImuPre->JVa;
-    JPg = pImuPre->JPg;
-    JPa = pImuPre->JPa;
-    avgA = pImuPre->avgA;
-    avgW = pImuPre->avgW;
-    bu.CopyFrom(pImuPre->bu);
-    db = pImuPre->db;
-    mvMeasurements = pImuPre->mvMeasurements;
-}
-
-
-void Preintegrated::Initialize(const Bias &b_)
-{
-    dR.setIdentity();
-    dV.setZero();
-    dP.setZero();
-    JRg.setZero();
-    JVg.setZero();
-    JVa.setZero();
-    JPg.setZero();
-    JPa.setZero();
-    C.setZero();
-    Info.setZero();
-    db.setZero();
-    b=b_;
-    bu=b_;
-    avgA.setZero();
-    avgW.setZero();
-    dT=0.0f;
-    mvMeasurements.clear();
-}
-
-void Preintegrated::Reintegrate()
-{
-    std::unique_lock<std::mutex> lock(mMutex);
-    const std::vector<integrable> aux = mvMeasurements;
-    Initialize(bu);
-    for(size_t i=0;i<aux.size();i++)
-        IntegrateNewMeasurement(aux[i].a,aux[i].w,aux[i].t);
-}
-
-void Preintegrated::IntegrateNewMeasurement(const Eigen::Vector3f &acceleration, const Eigen::Vector3f &angVel, const float &dt)
-{
-    mvMeasurements.push_back(integrable(acceleration,angVel,dt));
-
-    // Position is updated firstly, as it depends on previously computed velocity and rotation.
-    // Velocity is updated secondly, as it depends on previously computed rotation.
-    // Rotation is the last to be updated.
-
-    //Matrices to compute covariance
-    Eigen::Matrix<float,9,9> A;
-    A.setIdentity();
-    Eigen::Matrix<float,9,6> B;
-    B.setZero();
-
-    Eigen::Vector3f acc, accW;
-    acc << acceleration(0)-b.bax, acceleration(1)-b.bay, acceleration(2)-b.baz;
-    accW << angVel(0)-b.bwx, angVel(1)-b.bwy, angVel(2)-b.bwz;
-
-    avgA = (dT*avgA + dR*acc*dt)/(dT+dt);
-    avgW = (dT*avgW + accW*dt)/(dT+dt);
-
-    // Update delta position dP and velocity dV (rely on no-updated delta rotation)
-    dP = dP + dV*dt + 0.5f*dR*acc*dt*dt;
-    dV = dV + dR*acc*dt;
-
-    // Compute velocity and position parts of matrices A and B (rely on non-updated delta rotation)
-    Eigen::Matrix<float,3,3> Wacc = Sophus::SO3f::hat(acc);
-
-    A.block<3,3>(3,0) = -dR*dt*Wacc;
-    A.block<3,3>(6,0) = -0.5f*dR*dt*dt*Wacc;
-    A.block<3,3>(6,3) = Eigen::DiagonalMatrix<float,3>(dt, dt, dt);
-    B.block<3,3>(3,3) = dR*dt;
-    B.block<3,3>(6,3) = 0.5f*dR*dt*dt;
+        void Preintegrated::CopyFrom(Preintegrated* pImuPre)
+        {
+            std::cout << "Preintegrated: start clone" << std::endl;
+            dT = pImuPre->dT;
+            C = pImuPre->C.clone();
+            Info = pImuPre->Info.clone();
+            Nga = pImuPre->Nga.clone();
+            NgaWalk = pImuPre->NgaWalk.clone();
+            std::cout << "Preintegrated: first clone" << std::endl;
+            b.CopyFrom(pImuPre->b);
+            dR = pImuPre->dR.clone();
+            dV = pImuPre->dV.clone();
+            dP = pImuPre->dP.clone();
+            JRg = pImuPre->JRg.clone();
+            JVg = pImuPre->JVg.clone();
+            JVa = pImuPre->JVa.clone();
+            JPg = pImuPre->JPg.clone();
+            JPa = pImuPre->JPa.clone();
+            avgA = pImuPre->avgA.clone();
+            avgW = pImuPre->avgW.clone();
+            std::cout << "Preintegrated: second clone" << std::endl;
+            bu.CopyFrom(pImuPre->bu);
+            db = pImuPre->db.clone();
+            std::cout << "Preintegrated: third clone" << std::endl;
+            mvMeasurements = pImuPre->mvMeasurements;
+            std::cout << "Preintegrated: end clone" << std::endl;
+        }
 
 
-    // Update position and velocity jacobians wrt bias correction
-    JPa = JPa + JVa*dt -0.5f*dR*dt*dt;
-    JPg = JPg + JVg*dt -0.5f*dR*dt*dt*Wacc*JRg;
-    JVa = JVa - dR*dt;
-    JVg = JVg - dR*dt*Wacc*JRg;
+        void Preintegrated::Initialize(const Bias &b_)
+        {
+            dR = cv::Mat::eye(3,3,CV_32F);
+            dV = cv::Mat::zeros(3,1,CV_32F);
+            dP = cv::Mat::zeros(3,1,CV_32F);
+            JRg = cv::Mat::zeros(3,3,CV_32F);
+            JVg = cv::Mat::zeros(3,3,CV_32F);
+            JVa = cv::Mat::zeros(3,3,CV_32F);
+            JPg = cv::Mat::zeros(3,3,CV_32F);
+            JPa = cv::Mat::zeros(3,3,CV_32F);
+            C = cv::Mat::zeros(15,15,CV_32F);
+            Info=cv::Mat();
+            db = cv::Mat::zeros(6,1,CV_32F);
+            b=b_;
+            bu=b_;
+            avgA = cv::Mat::zeros(3,1,CV_32F);
+            avgW = cv::Mat::zeros(3,1,CV_32F);
+            dT=0.0f;
+            mvMeasurements.clear();
+        }
 
-    // Update delta rotation
-    IntegratedRotation dRi(angVel,b,dt);
-    dR = NormalizeRotation(dR*dRi.deltaR);
+        void Preintegrated::Reintegrate()
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            const std::vector<integrable> aux = mvMeasurements;
+            Initialize(bu);
+            for(size_t i=0;i<aux.size();i++)
+                IntegrateNewMeasurement(aux[i].a,aux[i].w,aux[i].t);
+        }
 
-    // Compute rotation parts of matrices A and B
-    A.block<3,3>(0,0) = dRi.deltaR.transpose();
-    B.block<3,3>(0,0) = dRi.rightJ*dt;
-
-    // Update covariance
-    C.block<9,9>(0,0) = A * C.block<9,9>(0,0) * A.transpose() + B*Nga*B.transpose();
-    C.block<6,6>(9,9) += NgaWalk;
-
-    // Update rotation jacobian wrt bias correction
-    JRg = dRi.deltaR.transpose()*JRg - dRi.rightJ*dt;
-
-    // Total integrated time
-    dT += dt;
-}
-
-void Preintegrated::MergePrevious(Preintegrated* pPrev)
-{
-    if (pPrev==this)
-        return;
-
-    std::unique_lock<std::mutex> lock1(mMutex);
-    std::unique_lock<std::mutex> lock2(pPrev->mMutex);
-    Bias bav;
-    bav.bwx = bu.bwx;
-    bav.bwy = bu.bwy;
-    bav.bwz = bu.bwz;
-    bav.bax = bu.bax;
-    bav.bay = bu.bay;
-    bav.baz = bu.baz;
-
-    const std::vector<integrable > aux1 = pPrev->mvMeasurements;
-    const std::vector<integrable> aux2 = mvMeasurements;
-
-    Initialize(bav);
-    for(size_t i=0;i<aux1.size();i++)
-        IntegrateNewMeasurement(aux1[i].a,aux1[i].w,aux1[i].t);
-    for(size_t i=0;i<aux2.size();i++)
-        IntegrateNewMeasurement(aux2[i].a,aux2[i].w,aux2[i].t);
-
-}
-
-void Preintegrated::SetNewBias(const Bias &bu_)
-{
-    std::unique_lock<std::mutex> lock(mMutex);
-    bu = bu_;
-
-    db(0) = bu_.bwx-b.bwx;
-    db(1) = bu_.bwy-b.bwy;
-    db(2) = bu_.bwz-b.bwz;
-    db(3) = bu_.bax-b.bax;
-    db(4) = bu_.bay-b.bay;
-    db(5) = bu_.baz-b.baz;
-}
-
-IMU::Bias Preintegrated::GetDeltaBias(const Bias &b_)
-{
-    std::unique_lock<std::mutex> lock(mMutex);
-    return IMU::Bias(b_.bax-b.bax,b_.bay-b.bay,b_.baz-b.baz,b_.bwx-b.bwx,b_.bwy-b.bwy,b_.bwz-b.bwz);
-}
+//IMU预积分
+/*********************************
+ * acceleration:加速度
+ * angVel：角速度
+ * dt：两个IMU数据之间的时间差
+*********************************/
+        void Preintegrated::IntegrateNewMeasurement(const cv::Point3f &acceleration, const cv::Point3f &angVel, const float &dt)
+        {
+            //存储IMU加速度、角速度和时间
+            mvMeasurements.push_back(integrable(acceleration,angVel,dt));
 
 
-Eigen::Matrix3f Preintegrated::GetDeltaRotation(const Bias &b_)
-{
-    std::unique_lock<std::mutex> lock(mMutex);
-    Eigen::Vector3f dbg;
-    dbg << b_.bwx-b.bwx,b_.bwy-b.bwy,b_.bwz-b.bwz;
-    return NormalizeRotation(dR * Sophus::SO3f::exp(JRg * dbg).matrix());
-}
+            //Matrices to compute covariance
+            //计算协方差 参考Forster论文公式（62）
+            cv::Mat A = cv::Mat::eye(9,9,CV_32F);
+            cv::Mat B = cv::Mat::zeros(9,6,CV_32F);
 
-Eigen::Vector3f Preintegrated::GetDeltaVelocity(const Bias &b_)
-{
-    std::unique_lock<std::mutex> lock(mMutex);
-    Eigen::Vector3f dbg, dba;
-    dbg << b_.bwx-b.bwx,b_.bwy-b.bwy,b_.bwz-b.bwz;
-    dba << b_.bax-b.bax,b_.bay-b.bay,b_.baz-b.baz;
-    return dV + JVg * dbg + JVa * dba;
-}
+            // 考虑偏置后的加速度、角速度
+            cv::Mat acc = (cv::Mat_<float>(3,1) << acceleration.x-b.bax,acceleration.y-b.bay, acceleration.z-b.baz);
+            cv::Mat accW = (cv::Mat_<float>(3,1) << angVel.x-b.bwx, angVel.y-b.bwy, angVel.z-b.bwz);
 
-Eigen::Vector3f Preintegrated::GetDeltaPosition(const Bias &b_)
-{
-    std::unique_lock<std::mutex> lock(mMutex);
-    Eigen::Vector3f dbg, dba;
-    dbg << b_.bwx-b.bwx,b_.bwy-b.bwy,b_.bwz-b.bwz;
-    dba << b_.bax-b.bax,b_.bay-b.bay,b_.baz-b.baz;
-    return dP + JPg * dbg + JPa * dba;
-}
+            //计算平均加速度、角速度
+            avgA = (dT*avgA + dR*acc*dt)/(dT+dt);
+            avgW = (dT*avgW + accW*dt)/(dT+dt);
 
-Eigen::Matrix3f Preintegrated::GetUpdatedDeltaRotation()
-{
-    std::unique_lock<std::mutex> lock(mMutex);
-    return NormalizeRotation(dR * Sophus::SO3f::exp(JRg*db.head(3)).matrix());
-}
+            // Update delta position dP and velocity dV (rely on no-updated delta rotation)
+            //更新dp和dv（利用还未更新的dR先更新dV和dP）
+            dP = dP + dV*dt + 0.5f*dR*acc*dt*dt;
+            dV = dV + dR*acc*dt;
 
-Eigen::Vector3f Preintegrated::GetUpdatedDeltaVelocity()
-{
-    std::unique_lock<std::mutex> lock(mMutex);
-    return dV + JVg * db.head(3) + JVa * db.tail(3);
-}
+            // Compute velocity and position parts of matrices A and B (rely on non-updated delta rotation)
+            cv::Mat Wacc = (cv::Mat_<float>(3,3) << 0, -acc.at<float>(2), acc.at<float>(1),
+                    acc.at<float>(2), 0, -acc.at<float>(0),
+                    -acc.at<float>(1), acc.at<float>(0), 0);
+            A.rowRange(3,6).colRange(0,3) = -dR*dt*Wacc;
+            A.rowRange(6,9).colRange(0,3) = -0.5f*dR*dt*dt*Wacc;
+            A.rowRange(6,9).colRange(3,6) = cv::Mat::eye(3,3,CV_32F)*dt;
+            B.rowRange(3,6).colRange(3,6) = dR*dt;
+            B.rowRange(6,9).colRange(3,6) = 0.5f*dR*dt*dt;
 
-Eigen::Vector3f Preintegrated::GetUpdatedDeltaPosition()
-{
-    std::unique_lock<std::mutex> lock(mMutex);
-    return dP + JPg*db.head(3) + JPa*db.tail(3);
-}
+            // Update position and velocity jacobians wrt bias correction
+            JPa = JPa + JVa*dt -0.5f*dR*dt*dt;
+            JPg = JPg + JVg*dt -0.5f*dR*dt*dt*Wacc*JRg;
+            JVa = JVa - dR*dt;
+            JVg = JVg - dR*dt*Wacc*JRg;
 
-Eigen::Matrix3f Preintegrated::GetOriginalDeltaRotation() {
-    std::unique_lock<std::mutex> lock(mMutex);
-    return dR;
-}
+            // Update delta rotation
+            IntegratedRotation dRi(angVel,b,dt);
+            dR = NormalizeRotation(dR*dRi.deltaR);// 强行归一化使其符合旋转矩阵的格式
 
-Eigen::Vector3f Preintegrated::GetOriginalDeltaVelocity() {
-    std::unique_lock<std::mutex> lock(mMutex);
-    return dV;
-}
+            // Compute rotation parts of matrices A and B
+            A.rowRange(0,3).colRange(0,3) = dRi.deltaR.t();
+            B.rowRange(0,3).colRange(0,3) = dRi.rightJ*dt;
 
-Eigen::Vector3f Preintegrated::GetOriginalDeltaPosition()
-{
-    std::unique_lock<std::mutex> lock(mMutex);
-    return dP;
-}
+            // Update covariance
+            //更新协方差，frost经典预积分论文的第63个公式
+            C.rowRange(0,9).colRange(0,9) = A*C.rowRange(0,9).colRange(0,9)*A.t() + B*Nga*B.t();
+            // 这一部分最开始是0矩阵，随着积分次数增加，每次都加上随机游走，偏置的信息矩阵
+            C.rowRange(9,15).colRange(9,15) = C.rowRange(9,15).colRange(9,15) + NgaWalk;
 
-Bias Preintegrated::GetOriginalBias()
-{
-    std::unique_lock<std::mutex> lock(mMutex);
-    return b;
-}
+            // Update rotation jacobian wrt bias correction
+            JRg = dRi.deltaR.t()*JRg - dRi.rightJ*dt;
 
-Bias Preintegrated::GetUpdatedBias()
-{
-    std::unique_lock<std::mutex> lock(mMutex);
-    return bu;
-}
+            // Total integrated time
+            //更新总时间
+            dT += dt;
+        }
 
-Eigen::Matrix<float,6,1> Preintegrated::GetDeltaBias()
-{
-    std::unique_lock<std::mutex> lock(mMutex);
-    return db;
-}
+        void Preintegrated::MergePrevious(Preintegrated* pPrev)
+        {
+            if (pPrev==this)
+                return;
 
-void Bias::CopyFrom(Bias &b)
-{
-    bax = b.bax;
-    bay = b.bay;
-    baz = b.baz;
-    bwx = b.bwx;
-    bwy = b.bwy;
-    bwz = b.bwz;
-}
+            std::unique_lock<std::mutex> lock1(mMutex);
+            std::unique_lock<std::mutex> lock2(pPrev->mMutex);
+            Bias bav;
+            bav.bwx = bu.bwx;
+            bav.bwy = bu.bwy;
+            bav.bwz = bu.bwz;
+            bav.bax = bu.bax;
+            bav.bay = bu.bay;
+            bav.baz = bu.baz;
 
-std::ostream& operator<< (std::ostream &out, const Bias &b)
-{
-    if(b.bwx>0)
-        out << " ";
-    out << b.bwx << ",";
-    if(b.bwy>0)
-        out << " ";
-    out << b.bwy << ",";
-    if(b.bwz>0)
-        out << " ";
-    out << b.bwz << ",";
-    if(b.bax>0)
-        out << " ";
-    out << b.bax << ",";
-    if(b.bay>0)
-        out << " ";
-    out << b.bay << ",";
-    if(b.baz>0)
-        out << " ";
-    out << b.baz;
+            const std::vector<integrable > aux1 = pPrev->mvMeasurements;
+            const std::vector<integrable> aux2 = mvMeasurements;
 
-    return out;
-}
+            Initialize(bav);
+            for(size_t i=0;i<aux1.size();i++)
+                IntegrateNewMeasurement(aux1[i].a,aux1[i].w,aux1[i].t);
+            for(size_t i=0;i<aux2.size();i++)
+                IntegrateNewMeasurement(aux2[i].a,aux2[i].w,aux2[i].t);
 
-void Calib::Set(const Sophus::SE3<float> &sophTbc, const float &ng, const float &na, const float &ngw, const float &naw) {
-    mbIsSet = true;
-    const float ng2 = ng*ng;
-    const float na2 = na*na;
-    const float ngw2 = ngw*ngw;
-    const float naw2 = naw*naw;
+        }
 
-    // Sophus/Eigen
-    mTbc = sophTbc;
-    mTcb = mTbc.inverse();
-    Cov.diagonal() << ng2, ng2, ng2, na2, na2, na2;
-    CovWalk.diagonal() << ngw2, ngw2, ngw2, naw2, naw2, naw2;
-}
+        void Preintegrated::SetNewBias(const Bias &bu_)
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            bu = bu_;
 
-Calib::Calib(const Calib &calib)
-{
-    mbIsSet = calib.mbIsSet;
-    // Sophus/Eigen parameters
-    mTbc = calib.mTbc;
-    mTcb = calib.mTcb;
-    Cov = calib.Cov;
-    CovWalk = calib.CovWalk;
-}
+            db.at<float>(0) = bu_.bwx-b.bwx;
+            db.at<float>(1) = bu_.bwy-b.bwy;
+            db.at<float>(2) = bu_.bwz-b.bwz;
+            db.at<float>(3) = bu_.bax-b.bax;
+            db.at<float>(4) = bu_.bay-b.bay;
+            db.at<float>(5) = bu_.baz-b.baz;
+        }
 
-} //namespace IMU
+        IMU::Bias Preintegrated::GetDeltaBias(const Bias &b_)
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            return IMU::Bias(b_.bax-b.bax,b_.bay-b.bay,b_.baz-b.baz,b_.bwx-b.bwx,b_.bwy-b.bwy,b_.bwz-b.bwz);
+        }
+
+        cv::Mat Preintegrated::GetDeltaRotation(const Bias &b_)
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            cv::Mat dbg = (cv::Mat_<float>(3,1) << b_.bwx-b.bwx,b_.bwy-b.bwy,b_.bwz-b.bwz);
+            return NormalizeRotation(dR*ExpSO3(JRg*dbg));
+        }
+
+        cv::Mat Preintegrated::GetDeltaVelocity(const Bias &b_)
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            cv::Mat dbg = (cv::Mat_<float>(3,1) << b_.bwx-b.bwx,b_.bwy-b.bwy,b_.bwz-b.bwz);
+            cv::Mat dba = (cv::Mat_<float>(3,1) << b_.bax-b.bax,b_.bay-b.bay,b_.baz-b.baz);
+            return dV + JVg*dbg + JVa*dba;
+        }
+
+        cv::Mat Preintegrated::GetDeltaPosition(const Bias &b_)
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            cv::Mat dbg = (cv::Mat_<float>(3,1) << b_.bwx-b.bwx,b_.bwy-b.bwy,b_.bwz-b.bwz);
+            cv::Mat dba = (cv::Mat_<float>(3,1) << b_.bax-b.bax,b_.bay-b.bay,b_.baz-b.baz);
+            return dP + JPg*dbg + JPa*dba;
+        }
+
+        cv::Mat Preintegrated::GetUpdatedDeltaRotation()
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            return NormalizeRotation(dR*ExpSO3(JRg*db.rowRange(0,3)));
+        }
+
+        cv::Mat Preintegrated::GetUpdatedDeltaVelocity()
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            return dV + JVg*db.rowRange(0,3) + JVa*db.rowRange(3,6);
+        }
+
+        cv::Mat Preintegrated::GetUpdatedDeltaPosition()
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            return dP + JPg*db.rowRange(0,3) + JPa*db.rowRange(3,6);
+        }
+
+        cv::Mat Preintegrated::GetOriginalDeltaRotation()
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            return dR.clone();
+        }
+
+        cv::Mat Preintegrated::GetOriginalDeltaVelocity()
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            return dV.clone();
+        }
+
+        cv::Mat Preintegrated::GetOriginalDeltaPosition()
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            return dP.clone();
+        }
+
+        Bias Preintegrated::GetOriginalBias()
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            return b;
+        }
+
+        Bias Preintegrated::GetUpdatedBias()
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            return bu;
+        }
+
+        cv::Mat Preintegrated::GetDeltaBias()
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            return db.clone();
+        }
+
+        Eigen::Matrix<double,15,15> Preintegrated::GetInformationMatrix()
+        {
+            std::unique_lock<std::mutex> lock(mMutex);
+            if(Info.empty())
+            {
+                Info = cv::Mat::zeros(15,15,CV_32F);
+                Info.rowRange(0,9).colRange(0,9)=C.rowRange(0,9).colRange(0,9).inv(cv::DECOMP_SVD);
+                for(int i=9;i<15;i++)
+                    Info.at<float>(i,i)=1.0f/C.at<float>(i,i);
+            }
+
+            Eigen::Matrix<double,15,15> EI;
+            for(int i=0;i<15;i++)
+                for(int j=0;j<15;j++)
+                    EI(i,j)=Info.at<float>(i,j);
+            return EI;
+        }
+
+        void Bias::CopyFrom(Bias &b)
+        {
+            bax = b.bax;
+            bay = b.bay;
+            baz = b.baz;
+            bwx = b.bwx;
+            bwy = b.bwy;
+            bwz = b.bwz;
+        }
+
+        std::ostream& operator<< (std::ostream &out, const Bias &b)
+        {
+            if(b.bwx>0)
+                out << " ";
+            out << b.bwx << ",";
+            if(b.bwy>0)
+                out << " ";
+            out << b.bwy << ",";
+            if(b.bwz>0)
+                out << " ";
+            out << b.bwz << ",";
+            if(b.bax>0)
+                out << " ";
+            out << b.bax << ",";
+            if(b.bay>0)
+                out << " ";
+            out << b.bay << ",";
+            if(b.baz>0)
+                out << " ";
+            out << b.baz;
+
+            return out;
+        }
+
+        void Calib::Set(const cv::Mat &Tbc_, const float &ng, const float &na, const float &ngw, const float &naw)
+        {
+            Tbc = Tbc_.clone();
+            Tcb = cv::Mat::eye(4,4,CV_32F);
+            Tcb.rowRange(0,3).colRange(0,3) = Tbc.rowRange(0,3).colRange(0,3).t();
+            Tcb.rowRange(0,3).col(3) = -Tbc.rowRange(0,3).colRange(0,3).t()*Tbc.rowRange(0,3).col(3);
+            Cov = cv::Mat::eye(6,6,CV_32F);
+            const float ng2 = ng*ng;
+            const float na2 = na*na;
+            Cov.at<float>(0,0) = ng2;
+            Cov.at<float>(1,1) = ng2;
+            Cov.at<float>(2,2) = ng2;
+            Cov.at<float>(3,3) = na2;
+            Cov.at<float>(4,4) = na2;
+            Cov.at<float>(5,5) = na2;
+            CovWalk = cv::Mat::eye(6,6,CV_32F);
+            const float ngw2 = ngw*ngw;
+            const float naw2 = naw*naw;
+            CovWalk.at<float>(0,0) = ngw2;
+            CovWalk.at<float>(1,1) = ngw2;
+            CovWalk.at<float>(2,2) = ngw2;
+            CovWalk.at<float>(3,3) = naw2;
+            CovWalk.at<float>(4,4) = naw2;
+            CovWalk.at<float>(5,5) = naw2;
+        }
+
+        Calib::Calib(const Calib &calib)
+        {
+            Tbc = calib.Tbc.clone();
+            Tcb = calib.Tcb.clone();
+            Cov = calib.Cov.clone();
+            CovWalk = calib.CovWalk.clone();
+        }
+
+    } //namespace IMU
 
 } //namespace ORB_SLAM2
