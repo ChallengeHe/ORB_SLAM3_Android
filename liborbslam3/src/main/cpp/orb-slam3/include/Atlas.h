@@ -1,7 +1,7 @@
 /**
 * This file is part of ORB-SLAM3
 *
-* Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+* Copyright (C) 2017-2020 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 * Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 *
 * ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
@@ -34,6 +34,7 @@
 
 namespace ORB_SLAM3
 {
+
 class Map;
 class MapPoint;
 class KeyFrame;
@@ -44,26 +45,6 @@ class Pinhole;
 
 class Atlas
 {
-    friend class boost::serialization::access;
-
-    template<class Archive>
-    void serialize(Archive &ar, const unsigned int version)
-    {
-        ar.template register_type<Pinhole>();
-        ar.template register_type<KannalaBrandt8>();
-
-        // Save/load a set structure, the set structure is broken in libboost 1.58 for ubuntu 16.04, a vector is serializated
-        //ar & mspMaps;
-        ar & mvpBackupMaps;
-        ar & mvpCameras;
-        // Need to save/load the static Id from Frame, KeyFrame, MapPoint and Map
-        ar & Map::nNextId;
-        ar & Frame::nNextId;
-        ar & KeyFrame::nNextId;
-        ar & MapPoint::nNextId;
-        ar & GeometricCamera::nNextId;
-        ar & mnLastInitKFidMap;
-    }
 
 public:
     Atlas();
@@ -112,10 +93,6 @@ public:
     void SetImuInitialized();
     bool isImuInitialized();
 
-    // Function for garantee the correction of serialization of this object
-    void PreSave();
-    void PostLoad();
-
     void SetKeyFrameDababase(KeyFrameDatabase* pKFDB);
     KeyFrameDatabase* GetKeyFrameDatabase();
 
@@ -130,9 +107,6 @@ protected:
 
     std::set<Map*> mspMaps;
     std::set<Map*> mspBadMaps;
-    // Its necessary change the container from set to vector because libboost 1.58 and Ubuntu 16.04 have an error with this cointainer
-    std::vector<Map*> mvpBackupMaps;
-
     Map* mpCurrentMap;
 
     std::vector<GeometricCamera*> mvpCameras;

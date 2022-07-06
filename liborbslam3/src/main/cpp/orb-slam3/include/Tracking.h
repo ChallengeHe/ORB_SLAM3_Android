@@ -1,7 +1,7 @@
 /**
 * This file is part of ORB-SLAM3
 *
-* Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+* Copyright (C) 2017-2020 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 * Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 *
 * ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
@@ -52,7 +52,6 @@ class Tracking
 {  
 
 public:
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     Tracking(System* pSys, ORBVocabulary* pVoc, Atlas* pAtlas,
              KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor, const string &_nameSeq=std::string());
 
@@ -67,13 +66,13 @@ public:
     cv::Mat GrabImageStereo(const cv::Mat &imRectLeft,const cv::Mat &imRectRight, const double &timestamp, string filename);
     cv::Mat GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const double &timestamp, string filename);
     cv::Mat GrabImageMonocular(const cv::Mat &im, const double &timestamp, string filename);
+    // cv::Mat GrabImageImuMonocular(const cv::Mat &im, const double &timestamp);
 
     void GrabImuData(const IMU::Point &imuMeasurement);
 
     void SetLocalMapper(LocalMapping* pLocalMapper);
     void SetLoopClosing(LoopClosing* pLoopClosing);
     void SetStepByStep(bool bSet);
-    bool GetStepByStep();
 
     // Load new settings
     // The focal lenght should be similar or scale prediction will fail when projecting points
@@ -89,26 +88,12 @@ public:
     }
 
     void CreateMapInAtlas();
-    //std::mutex mMutexTracks;
+    std::mutex mMutexTracks;
 
     //--
     void NewDataset();
     int GetNumberDataset();
     int GetMatchesInliers();
-
-    //DEBUG
-    void SaveSubTrajectory(string strNameFile_frames, string strNameFile_kf, string strFolder="");
-    void SaveSubTrajectory(string strNameFile_frames, string strNameFile_kf, Map* pMap);
-
-    float GetImageScale();
-
-#ifdef REGISTER_LOOP
-    void RequestStop();
-    bool isStopped();
-    void Release();
-    bool stopRequested();
-#endif
-
 public:
 
     // Tracking states
@@ -175,7 +160,6 @@ public:
     void PrintTimeStats();
 
     vector<double> vdRectStereo_ms;
-    vector<double> vdResizeImage_ms;
     vector<double> vdORBExtract_ms;
     vector<double> vdStereoMatch_ms;
     vector<double> vdIMUInteg_ms;
@@ -183,7 +167,14 @@ public:
     vector<double> vdLMTrack_ms;
     vector<double> vdNewKF_ms;
     vector<double> vdTrackTotal_ms;
+
+    vector<double> vdUpdatedLM_ms;
+    vector<double> vdSearchLP_ms;
+    vector<double> vdPoseOpt_ms;
 #endif
+
+    vector<int> vnKeyFramesLM;
+    vector<int> vnMapPointsLM;
 
 protected:
 
@@ -222,9 +213,9 @@ protected:
     void PreintegrateIMU();
 
     // Reset IMU biases and compute frame velocity
-    void ResetFrameIMU();
     void ComputeGyroBias(const vector<Frame*> &vpFs, float &bwx,  float &bwy, float &bwz);
     void ComputeVelocitiesAccBias(const vector<Frame*> &vpFs, float &bax,  float &bay, float &baz);
+
 
     bool mbMapUpdated;
 
@@ -274,6 +265,9 @@ protected:
     // System
     System* mpSystem;
     
+    // Drawers
+    // remove by hitomi 
+
     bool bStepByStep;
 
     //Atlas
@@ -308,12 +302,14 @@ protected:
     unsigned int mnLastRelocFrameId;
     double mTimeStampLost;
     double time_recently_lost;
+    double time_recently_lost_visual;
 
     unsigned int mnFirstFrameId;
     unsigned int mnInitialFrameId;
     unsigned int mnLastInitFrameId;
 
     bool mbCreatedMap;
+
 
     //Motion Model
     cv::Mat mVelocity;

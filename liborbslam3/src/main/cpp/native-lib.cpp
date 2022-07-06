@@ -39,7 +39,7 @@ Java_com_damon_orbslam3_NativeLib_nativeGetTrackingState(JNIEnv *env, jobject th
     if (pSystem) {
         return pSystem->GetTrackingState();
     }
-    return ORB_SLAM3::Tracking::eTrackingState::SYSTEM_NOT_READY;
+    return -1;
 }
 extern "C"
 JNIEXPORT jobject JNICALL
@@ -56,8 +56,8 @@ Java_com_damon_orbslam3_NativeLib_nativeTrackingMono(JNIEnv *env, jobject thiz, 
         cv::Mat inputSmall;
         int scale = 2;
         cv::resize(input, inputSmall, cv::Size(input.cols / scale, input.rows / scale));
-        LOGE("input:%d x %d", input.cols, input.rows);
-        LOGE("inputSmall:%d x %d", inputSmall.cols, inputSmall.rows);
+        LOGI("input:%d x %d", input.cols, input.rows);
+        LOGI("inputSmall:%d x %d", inputSmall.cols, inputSmall.rows);
         pSystem->TrackMonocular(inputSmall, timestamp_sec);
         vector<KeyPoint> points = pSystem->GetTrackedKeyPointsUn();
         if (points.size() > 0) {

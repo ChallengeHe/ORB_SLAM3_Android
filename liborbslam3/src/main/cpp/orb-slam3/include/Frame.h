@@ -20,8 +20,6 @@
 #ifndef FRAME_H
 #define FRAME_H
 
-//#define SAVE_TIMES
-
 #include<vector>
 
 #include "Thirdparty/DBoW2/DBoW2/BowVector.h"
@@ -29,6 +27,7 @@
 
 #include "ImuTypes.h"
 #include "ORBVocabulary.h"
+#include "Config.h"
 
 #include <mutex>
 #include <opencv2/opencv.hpp>
@@ -38,287 +37,290 @@ namespace ORB_SLAM3
 #define FRAME_GRID_ROWS 48
 #define FRAME_GRID_COLS 64
 
-    class MapPoint;
-    class KeyFrame;
-    class ConstraintPoseImu;
-    class GeometricCamera;
-    class ORBextractor;
+class MapPoint;
+class KeyFrame;
+class ConstraintPoseImu;
+class GeometricCamera;
+class ORBextractor;
 
-    class Frame
-    {
-    public:
-        Frame();
+class Frame
+{
+public:
+    Frame();
 
-        // Copy constructor.
-        Frame(const Frame &frame);
+    // Copy constructor.
+    Frame(const Frame &frame);
 
-        // Constructor for stereo cameras.
-        Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeStamp, ORBextractor* extractorLeft, ORBextractor* extractorRight, ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, GeometricCamera* pCamera,Frame* pPrevF = static_cast<Frame*>(NULL), const IMU::Calib &ImuCalib = IMU::Calib());
+    // Constructor for stereo cameras.
+    Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeStamp, ORBextractor* extractorLeft, ORBextractor* extractorRight, ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, GeometricCamera* pCamera,Frame* pPrevF = static_cast<Frame*>(NULL), const IMU::Calib &ImuCalib = IMU::Calib());
 
-        // Constructor for RGB-D cameras.
-        Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, Frame* pPrevF = static_cast<Frame*>(NULL), const IMU::Calib &ImuCalib = IMU::Calib());
+    // Constructor for RGB-D cameras.
+    Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, GeometricCamera* pCamera,Frame* pPrevF = static_cast<Frame*>(NULL), const IMU::Calib &ImuCalib = IMU::Calib());
 
-        // Constructor for Monocular cameras.
-        Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, GeometricCamera* pCamera, cv::Mat &distCoef, const float &bf, const float &thDepth, Frame* pPrevF = static_cast<Frame*>(NULL), const IMU::Calib &ImuCalib = IMU::Calib());
+    // Constructor for Monocular cameras.
+    Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extractor,ORBVocabulary* voc, GeometricCamera* pCamera, cv::Mat &distCoef, const float &bf, const float &thDepth, Frame* pPrevF = static_cast<Frame*>(NULL), const IMU::Calib &ImuCalib = IMU::Calib());
 
-        // Destructor
-        // ~Frame();
+    // Extract ORB on the image. 0 for left image and 1 for right image.
+    void ExtractORB(int flag, const cv::Mat &im, const int x0, const int x1);
 
-        // Extract ORB on the image. 0 for left image and 1 for right image.
-        void ExtractORB(int flag, const cv::Mat &im, const int x0, const int x1);
+    // Compute Bag of Words representation.
+    void ComputeBoW();
 
-        // Compute Bag of Words representation.
-        void ComputeBoW();
+    // Set the camera pose. (Imu pose is not modified!)
+    void SetPose(cv::Mat Tcw);
+    void GetPose(cv::Mat &Tcw);
 
-        // Set the camera pose. (Imu pose is not modified!)
-        void SetPose(cv::Mat Tcw);
-        void GetPose(cv::Mat &Tcw);
+    // Set IMU velocity
+    void SetVelocity(const cv::Mat &Vwb);
 
-        // Set IMU velocity
-        void SetVelocity(const cv::Mat &Vwb);
+    // Set IMU pose and velocity (implicitly changes camera pose)
+    void SetImuPoseVelocity(const cv::Mat &Rwb, const cv::Mat &twb, const cv::Mat &Vwb);
 
-        // Set IMU pose and velocity (implicitly changes camera pose)
-        void SetImuPoseVelocity(const cv::Mat &Rwb, const cv::Mat &twb, const cv::Mat &Vwb);
 
+    // Computes rotation, translation and camera center matrices from the camera pose.
+    void UpdatePoseMatrices();
 
-        // Computes rotation, translation and camera center matrices from the camera pose.
-        void UpdatePoseMatrices();
+    // Returns the camera center.
+    inline cv::Mat GetCameraCenter(){
+        return mOw.clone();
+    }
 
-        // Returns the camera center.
-        inline cv::Mat GetCameraCenter(){
-            return mOw.clone();
-        }
+    // Returns inverse of rotation
+    inline cv::Mat GetRotationInverse(){
+        return mRwc.clone();
+    }
 
-        // Returns inverse of rotation
-        inline cv::Mat GetRotationInverse(){
-            return mRwc.clone();
-        }
+    cv::Mat GetImuPosition();
+    cv::Mat GetImuRotation();
+    cv::Mat GetImuPose();
 
-        cv::Mat GetImuPosition();
-        cv::Mat GetImuRotation();
-        cv::Mat GetImuPose();
+    void SetNewBias(const IMU::Bias &b);
 
-        void SetNewBias(const IMU::Bias &b);
+    // Check if a MapPoint is in the frustum of the camera
+    // and fill variables of the MapPoint to be used by the tracking
+    bool isInFrustum(MapPoint* pMP, float viewingCosLimit);
 
-        // Check if a MapPoint is in the frustum of the camera
-        // and fill variables of the MapPoint to be used by the tracking
-        bool isInFrustum(MapPoint* pMP, float viewingCosLimit);
+    bool ProjectPointDistort(MapPoint* pMP, cv::Point2f &kp, float &u, float &v);
 
-        bool ProjectPointDistort(MapPoint* pMP, cv::Point2f &kp, float &u, float &v);
+    cv::Mat inRefCoordinates(cv::Mat pCw);
 
-        cv::Mat inRefCoordinates(cv::Mat pCw);
+    // Compute the cell of a keypoint (return false if outside the grid)
+    bool PosInGrid(const cv::KeyPoint &kp, int &posX, int &posY);
 
-        // Compute the cell of a keypoint (return false if outside the grid)
-        bool PosInGrid(const cv::KeyPoint &kp, int &posX, int &posY);
+    vector<size_t> GetFeaturesInArea(const float &x, const float  &y, const float  &r, const int minLevel=-1, const int maxLevel=-1, const bool bRight = false) const;
 
-        vector<size_t> GetFeaturesInArea(const float &x, const float  &y, const float  &r, const int minLevel=-1, const int maxLevel=-1, const bool bRight = false) const;
+    // Search a match for each keypoint in the left image to a keypoint in the right image.
+    // If there is a match, depth is computed and the right coordinate associated to the left keypoint is stored.
+    void ComputeStereoMatches();
 
-        // Search a match for each keypoint in the left image to a keypoint in the right image.
-        // If there is a match, depth is computed and the right coordinate associated to the left keypoint is stored.
-        void ComputeStereoMatches();
+    // Associate a "right" coordinate to a keypoint if there is valid depth in the depthmap.
+    void ComputeStereoFromRGBD(const cv::Mat &imDepth);
 
-        // Associate a "right" coordinate to a keypoint if there is valid depth in the depthmap.
-        void ComputeStereoFromRGBD(const cv::Mat &imDepth);
+    // Backprojects a keypoint (if stereo/depth info available) into 3D world coordinates.
+    cv::Mat UnprojectStereo(const int &i);
 
-        // Backprojects a keypoint (if stereo/depth info available) into 3D world coordinates.
-        cv::Mat UnprojectStereo(const int &i);
+    ConstraintPoseImu* mpcpi;
 
-        ConstraintPoseImu* mpcpi;
+    bool imuIsPreintegrated();
+    void setIntegrated();
 
-        bool imuIsPreintegrated();
-        void setIntegrated();
+    cv::Mat mRwc;
+    cv::Mat mOw;
+public:
+    // Vocabulary used for relocalization.
+    ORBVocabulary* mpORBvocabulary;
 
-        cv::Mat mRwc;//当前相机坐标系到世界坐标系的旋转
-        cv::Mat mOw; //世界坐标系下当前相机坐标系的位置
-    public:
-        // Vocabulary used for relocalization.
-        ORBVocabulary* mpORBvocabulary;
+    // Feature extractor. The right is used only in the stereo case.
+    ORBextractor* mpORBextractorLeft, *mpORBextractorRight;
 
-        // Feature extractor. The right is used only in the stereo case.
-        ORBextractor* mpORBextractorLeft, *mpORBextractorRight;
+    // Frame timestamp.
+    double mTimeStamp;
 
-        // Frame timestamp.
-        double mTimeStamp;
-
-        // Calibration matrix and OpenCV distortion parameters.
-        cv::Mat mK;
-        static float fx;
-        static float fy;
-        static float cx;
-        static float cy;
-        static float invfx;
-        static float invfy;
-        cv::Mat mDistCoef;
+    // Calibration matrix and OpenCV distortion parameters.
+    cv::Mat mK;
+    static float fx;
+    static float fy;
+    static float cx;
+    static float cy;
+    static float invfx;
+    static float invfy;
+    cv::Mat mDistCoef;
 
-        // Stereo baseline multiplied by fx.
-        float mbf;
+    // Stereo baseline multiplied by fx.
+    float mbf;
 
-        // Stereo baseline in meters.
-        float mb;
+    // Stereo baseline in meters.
+    float mb;
 
-        // Threshold close/far points. Close points are inserted from 1 view.
-        // Far points are inserted as in the monocular case from 2 views.
-        float mThDepth;
+    // Threshold close/far points. Close points are inserted from 1 view.
+    // Far points are inserted as in the monocular case from 2 views.
+    float mThDepth;
 
-        // Number of KeyPoints.
-        int N;
+    // Number of KeyPoints.
+    int N;
 
-        // Vector of keypoints (original for visualization) and undistorted (actually used by the system).
-        // In the stereo case, mvKeysUn is redundant as images must be rectified.
-        // In the RGB-D case, RGB images can be distorted.
-        std::vector<cv::KeyPoint> mvKeys, mvKeysRight;
-        std::vector<cv::KeyPoint> mvKeysUn;
+    // Vector of keypoints (original for visualization) and undistorted (actually used by the system).
+    // In the stereo case, mvKeysUn is redundant as images must be rectified.
+    // In the RGB-D case, RGB images can be distorted.
+    std::vector<cv::KeyPoint> mvKeys, mvKeysRight;
+    std::vector<cv::KeyPoint> mvKeysUn;
 
-        // Corresponding stereo coordinate and depth for each keypoint.
-        std::vector<MapPoint*> mvpMapPoints;
-        // "Monocular" keypoints have a negative value.
-        std::vector<float> mvuRight;
-        std::vector<float> mvDepth;
+    // Corresponding stereo coordinate and depth for each keypoint.
+    std::vector<MapPoint*> mvpMapPoints;
+    // "Monocular" keypoints have a negative value.
+    std::vector<float> mvuRight;
+    std::vector<float> mvDepth;
 
-        // Bag of Words Vector structures.
-        DBoW2::BowVector mBowVec;
-        DBoW2::FeatureVector mFeatVec;
+    // Bag of Words Vector structures.
+    DBoW2::BowVector mBowVec;
+    DBoW2::FeatureVector mFeatVec;
 
-        // ORB descriptor, each row associated to a keypoint.
-        cv::Mat mDescriptors, mDescriptorsRight;
+    // ORB descriptor, each row associated to a keypoint.
+    cv::Mat mDescriptors, mDescriptorsRight;
 
-        // MapPoints associated to keypoints, NULL pointer if no association.
-        // Flag to identify outlier associations.
-        std::vector<bool> mvbOutlier;
-        int mnCloseMPs;
+    // MapPoints associated to keypoints, NULL pointer if no association.
+    // Flag to identify outlier associations.
+    std::vector<bool> mvbOutlier;
+    int mnCloseMPs;
 
-        // Keypoints are assigned to cells in a grid to reduce matching complexity when projecting MapPoints.
-        static float mfGridElementWidthInv;
-        static float mfGridElementHeightInv;
-        std::vector<std::size_t> mGrid[FRAME_GRID_COLS][FRAME_GRID_ROWS];
+    // Keypoints are assigned to cells in a grid to reduce matching complexity when projecting MapPoints.
+    static float mfGridElementWidthInv;
+    static float mfGridElementHeightInv;
+    std::vector<std::size_t> mGrid[FRAME_GRID_COLS][FRAME_GRID_ROWS];
 
 
-        // Camera pose.
-        cv::Mat mTcw;
+    // Camera pose.
+    cv::Mat mTcw;
 
-        // IMU linear velocity
-        cv::Mat mVw;
+    // IMU linear velocity
+    cv::Mat mVw;
 
-        cv::Mat mPredRwb, mPredtwb, mPredVwb;
-        IMU::Bias mPredBias;
+    cv::Mat mPredRwb, mPredtwb, mPredVwb;
+    IMU::Bias mPredBias;
 
-        // IMU bias
-        IMU::Bias mImuBias;
+    // IMU bias
+    IMU::Bias mImuBias;
 
-        // Imu calibration
-        IMU::Calib mImuCalib;
+    // Imu calibration
+    IMU::Calib mImuCalib;
 
-        // Imu preintegration from last keyframe
-        IMU::Preintegrated* mpImuPreintegrated;
-        KeyFrame* mpLastKeyFrame;
+    // Imu preintegration from last keyframe
+    IMU::Preintegrated* mpImuPreintegrated;
+    KeyFrame* mpLastKeyFrame;
 
-        // Pointer to previous frame
-        Frame* mpPrevFrame;
-        IMU::Preintegrated* mpImuPreintegratedFrame;
+    // Pointer to previous frame
+    Frame* mpPrevFrame;
+    IMU::Preintegrated* mpImuPreintegratedFrame;
 
-        // Current and Next Frame id.
-        static long unsigned int nNextId;
-        long unsigned int mnId;
+    // Current and Next Frame id.
+    static long unsigned int nNextId;
+    long unsigned int mnId;
 
-        // Reference Keyframe.
-        KeyFrame* mpReferenceKF;
+    // Reference Keyframe.
+    KeyFrame* mpReferenceKF;
 
-        // Scale pyramid info.
-        int mnScaleLevels;
-        float mfScaleFactor;
-        float mfLogScaleFactor;
-        vector<float> mvScaleFactors;
-        vector<float> mvInvScaleFactors;
-        vector<float> mvLevelSigma2;
-        vector<float> mvInvLevelSigma2;
+    // Scale pyramid info.
+    int mnScaleLevels;
+    float mfScaleFactor;
+    float mfLogScaleFactor;
+    vector<float> mvScaleFactors;
+    vector<float> mvInvScaleFactors;
+    vector<float> mvLevelSigma2;
+    vector<float> mvInvLevelSigma2;
 
-        // Undistorted Image Bounds (computed once).
-        static float mnMinX;
-        static float mnMaxX;
-        static float mnMinY;
-        static float mnMaxY;
+    // Undistorted Image Bounds (computed once).
+    static float mnMinX;
+    static float mnMaxX;
+    static float mnMinY;
+    static float mnMaxY;
 
-        static bool mbInitialComputations;
+    static bool mbInitialComputations;
 
-        map<long unsigned int, cv::Point2f> mmProjectPoints;
-        map<long unsigned int, cv::Point2f> mmMatchedInImage;
+    map<long unsigned int, cv::Point2f> mmProjectPoints;
+    map<long unsigned int, cv::Point2f> mmMatchedInImage;
 
-        string mNameFile;
+    string mNameFile;
 
-        int mnDataset;
+    int mnDataset;
 
-        double mTimeStereoMatch;
-        double mTimeORB_Ext;
+#ifdef REGISTER_TIMES
+    double mTimeORB_Ext;
+    double mTimeStereoMatch;
+#endif
 
+private:
 
-    private:
+    // Undistort keypoints given OpenCV distortion parameters.
+    // Only for the RGB-D case. Stereo must be already rectified!
+    // (called in the constructor).
+    void UndistortKeyPoints();
 
-        // Undistort keypoints given OpenCV distortion parameters.
-        // Only for the RGB-D case. Stereo must be already rectified!
-        // (called in the constructor).
-        void UndistortKeyPoints();
+    // Computes image bounds for the undistorted image (called in the constructor).
+    void ComputeImageBounds(const cv::Mat &imLeft);
 
-        // Computes image bounds for the undistorted image (called in the constructor).
-        void ComputeImageBounds(const cv::Mat &imLeft);
+    // Assign keypoints to the grid for speed up feature matching (called in the constructor).
+    void AssignFeaturesToGrid();
 
-        // Assign keypoints to the grid for speed up feature matching (called in the constructor).
-        void AssignFeaturesToGrid();
+    // Rotation, translation and camera center
+    cv::Mat mRcw;
+    cv::Mat mtcw;
+    //==mtwc
 
-        // Rotation, translation and camera center
-        cv::Mat mRcw; //世界坐标系到当前相机坐标系的旋转
-        cv::Mat mtcw; //相机坐标系下世界坐标系的位置
-        //==mtwc
+    cv::Matx31f mOwx;
+    cv::Matx33f mRcwx;
+    cv::Matx31f mtcwx;
 
-        bool mbImuPreintegrated;
+    bool mbImuPreintegrated;
 
-        std::mutex *mpMutexImu;
+    std::mutex *mpMutexImu;
 
-    public:
-        GeometricCamera* mpCamera, *mpCamera2;
+public:
+    GeometricCamera* mpCamera, *mpCamera2;
 
-        //Number of KeyPoints extracted in the left and right images
-        int Nleft, Nright;
-        //Number of Non Lapping Keypoints
-        int monoLeft, monoRight;
+    //Number of KeyPoints extracted in the left and right images
+    int Nleft, Nright;
+    //Number of Non Lapping Keypoints
+    int monoLeft, monoRight;
 
-        //For stereo matching
-        std::vector<int> mvLeftToRightMatch, mvRightToLeftMatch;
+    //For stereo matching
+    std::vector<int> mvLeftToRightMatch, mvRightToLeftMatch;
 
-        //For stereo fisheye matching
-        static cv::BFMatcher BFmatcher;
+    //For stereo fisheye matching
+    static cv::BFMatcher BFmatcher;
 
-        //Triangulated stereo observations using as reference the left camera. These are
-        //computed during ComputeStereoFishEyeMatches
-        std::vector<cv::Mat> mvStereo3Dpoints;
+    //Triangulated stereo observations using as reference the left camera. These are
+    //computed during ComputeStereoFishEyeMatches
+    std::vector<cv::Mat> mvStereo3Dpoints;
 
-        //Grid for the right image
-        std::vector<std::size_t> mGridRight[FRAME_GRID_COLS][FRAME_GRID_ROWS];
+    //Grid for the right image
+    std::vector<std::size_t> mGridRight[FRAME_GRID_COLS][FRAME_GRID_ROWS];
 
-        cv::Mat mTlr, mRlr, mtlr, mTrl;
+    cv::Mat mTlr, mRlr, mtlr, mTrl;
+    cv::Matx34f mTrlx, mTlrx;
 
-        Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeStamp, ORBextractor* extractorLeft, ORBextractor* extractorRight, ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, GeometricCamera* pCamera, GeometricCamera* pCamera2, cv::Mat& Tlr,Frame* pPrevF = static_cast<Frame*>(NULL), const IMU::Calib &ImuCalib = IMU::Calib());
+    Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeStamp, ORBextractor* extractorLeft, ORBextractor* extractorRight, ORBVocabulary* voc, cv::Mat &K, cv::Mat &distCoef, const float &bf, const float &thDepth, GeometricCamera* pCamera, GeometricCamera* pCamera2, cv::Mat& Tlr,Frame* pPrevF = static_cast<Frame*>(NULL), const IMU::Calib &ImuCalib = IMU::Calib());
 
-        //Stereo fisheye
-        void ComputeStereoFishEyeMatches();
+    //Stereo fisheye
+    void ComputeStereoFishEyeMatches();
 
-        bool isInFrustumChecks(MapPoint* pMP, float viewingCosLimit, bool bRight = false);
+    bool isInFrustumChecks(MapPoint* pMP, float viewingCosLimit, bool bRight = false);
 
-        cv::Mat UnprojectStereoFishEye(const int &i);
+    cv::Mat UnprojectStereoFishEye(const int &i);
 
-        cv::Mat imgLeft, imgRight;
+    cv::Mat imgLeft, imgRight;
 
-        void PrintPointDistribution(){
-            int left = 0, right = 0;
-            int Nlim = (Nleft != -1) ? Nleft : N;
-            for(int i = 0; i < N; i++){
-                if(mvpMapPoints[i] && !mvbOutlier[i]){
-                    if(i < Nlim) left++;
-                    else right++;
-                }
+    void PrintPointDistribution(){
+        int left = 0, right = 0;
+        int Nlim = (Nleft != -1) ? Nleft : N;
+        for(int i = 0; i < N; i++){
+            if(mvpMapPoints[i] && !mvbOutlier[i]){
+                if(i < Nlim) left++;
+                else right++;
             }
-            cout << "Point distribution in Frame: left-> " << left << " --- right-> " << right << endl;
         }
-    };
+        cout << "Point distribution in Frame: left-> " << left << " --- right-> " << right << endl;
+    }
+};
 
 }// namespace ORB_SLAM
 

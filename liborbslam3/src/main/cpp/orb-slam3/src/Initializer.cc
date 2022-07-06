@@ -29,24 +29,15 @@
 namespace ORB_SLAM3
 {
 
-//构造函数，固定参考帧
-/*************************************
-    ReferenceFrame:参考图像帧
-    sigma：测量误差
-    iterations:RANSAC最大迭代次数
-************************************/
 Initializer::Initializer(const Frame &ReferenceFrame, float sigma, int iterations)
 {
     mpCamera = ReferenceFrame.mpCamera;
-    //相机内参
     mK = ReferenceFrame.mK.clone();
 
-    //参考帧的去畸变特征点
     mvKeys1 = ReferenceFrame.mvKeysUn;
 
     mSigma = sigma;
     mSigma2 = sigma*sigma;
-    //最大迭代次数
     mMaxIterations = iterations;
 }
 
@@ -112,8 +103,6 @@ bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatc
     thread threadH(&Initializer::FindHomography,this,ref(vbMatchesInliersH), ref(SH), ref(H));
     thread threadF(&Initializer::FindFundamental,this,ref(vbMatchesInliersF), ref(SF), ref(F));
 
-    //cout << "5" << endl;
-
     // Wait until both threads have finished
     threadH.join();
     threadF.join();
@@ -121,20 +110,16 @@ bool Initializer::Initialize(const Frame &CurrentFrame, const vector<int> &vMatc
     // Compute ratio of scores
     float RH = SH/(SH+SF);
 
-    //cout << "6" << endl;
-
     float minParallax = 1.0; // 1.0 originally
 
     cv::Mat K = static_cast<Pinhole*>(mpCamera)->toK();
     // Try to reconstruct from homography or fundamental depending on the ratio (0.40-0.45)
-    if(RH>0.40) // if(RH>0.40)
+    if(RH>0.40)
     {
-        //cout << "Initialization from Homography" << endl;
         return ReconstructH(vbMatchesInliersH,H, K,R21,t21,vP3D,vbTriangulated,minParallax,50);
     }
-    else //if(pF_HF>0.6)
+    else
     {
-        //cout << "Initialization from Fundamental" << endl;
         return ReconstructF(vbMatchesInliersF,F,K,R21,t21,vP3D,vbTriangulated,minParallax,50);
     }
 

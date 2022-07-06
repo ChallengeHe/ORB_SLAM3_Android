@@ -55,10 +55,8 @@
 #include<Eigen/Dense>
 #include<Eigen/Sparse>
 
-namespace ORB_SLAM3
-{
-    class MLPnPsolver
-    {
+namespace ORB_SLAM3{
+    class MLPnPsolver {
     public:
         MLPnPsolver(const Frame &F, const vector<MapPoint*> &vpMapPointMatches);
 
@@ -66,8 +64,6 @@ namespace ORB_SLAM3
 
         void SetRansacParameters(double probability = 0.99, int minInliers = 8, int maxIterations = 300, int minSet = 6, float epsilon = 0.4,
                                  float th2 = 5.991);
-
-        //Find metod is necessary?
 
         cv::Mat iterate(int nIterations, bool &bNoMore, vector<bool> &vbInliers, int &nInliers);
 
@@ -90,7 +86,6 @@ namespace ORB_SLAM3
         typedef Eigen::Matrix3d cov3_mat_t;
 
         /** An array of 3D covariance matrices */
-        //Eigen::Matrix3d = cov3_mat_t
         typedef std::vector<cov3_mat_t, Eigen::aligned_allocator<cov3_mat_t> >
                 cov3_mats_t;
 
@@ -158,12 +153,12 @@ namespace ORB_SLAM3
                 bool getJacs);
 
         void mlpnpJacs(
-                const point_t& pt,
-                const Eigen::Vector3d& nullspace_r,
-                const Eigen::Vector3d& nullspace_s,
-                const rodrigues_t& w,
-                const translation_t& t,
-                Eigen::MatrixXd& jacs);
+            const point_t& pt,
+            const Eigen::Vector3d& nullspace_r,
+            const Eigen::Vector3d& nullspace_s,
+            const rodrigues_t& w,
+            const translation_t& t,
+            Eigen::MatrixXd& jacs);
 
         //Auxiliar methods
 

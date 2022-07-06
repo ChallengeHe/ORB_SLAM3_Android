@@ -9,7 +9,7 @@ object NativeLib {
         width: Int,
         height: Int,
         timestampSec: Double
-    ): List<PointF>
+    ): List<PointF>?
 
     external fun nativeGetTrackingState(): Int
     external fun nativeReleaseTrackingSystem()

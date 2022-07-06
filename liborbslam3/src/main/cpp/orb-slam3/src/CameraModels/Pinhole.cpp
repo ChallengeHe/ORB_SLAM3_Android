@@ -20,18 +20,17 @@
 
 #include <boost/serialization/export.hpp>
 
-//BOOST_CLASS_EXPORT_IMPLEMENT(ORB_SLAM3::Pinhole)
-
-namespace ORB_SLAM3
-{
-//BOOST_CLASS_EXPORT_GUID(Pinhole, "Pinhole")
+namespace ORB_SLAM3 {
 
     long unsigned int GeometricCamera::nNextId=0;
 
-    cv::Point2f Pinhole::project(const cv::Point3f &p3D)
-    {
+    cv::Point2f Pinhole::project(const cv::Point3f &p3D) {
         return cv::Point2f(mvParameters[0] * p3D.x / p3D.z + mvParameters[2],
                            mvParameters[1] * p3D.y / p3D.z + mvParameters[3]);
+    }
+
+    cv::Point2f Pinhole::project(const cv::Matx31f &m3D) {
+        return this->project(cv::Point3f(m3D(0),m3D(1),m3D(2)));
     }
 
     cv::Point2f Pinhole::project(const cv::Mat &m3D) {
@@ -58,13 +57,8 @@ namespace ORB_SLAM3
         return 1.0;
     }
 
-// 2D->3D 反向投影
-//[(x-cx)/fx, (y-xy)/fy, 1]
-    cv::Point3f Pinhole::unproject(const cv::Point2f &p2D)
-    {
-        //fx=mvParameters[0],fy=mvParameters[1],cx=mvParameters[2],cy =mvParameters[3]
-        return cv::Point3f((p2D.x - mvParameters[2]) / mvParameters[0],
-                           (p2D.y - mvParameters[3]) / mvParameters[1],
+    cv::Point3f Pinhole::unproject(const cv::Point2f &p2D) {
+        return cv::Point3f((p2D.x - mvParameters[2]) / mvParameters[0], (p2D.y - mvParameters[3]) / mvParameters[1],
                            1.f);
     }
 
@@ -73,8 +67,13 @@ namespace ORB_SLAM3
         return (cv::Mat_<float>(3,1) << ray.x, ray.y, ray.z);
     }
 
-    cv::Mat Pinhole::projectJac(const cv::Point3f &p3D)
-    {
+    cv::Matx31f Pinhole::unprojectMat_(const cv::Point2f &p2D) {
+        cv::Point3f ray = this->unproject(p2D);
+        cv::Matx31f r{ray.x, ray.y, ray.z};
+        return r;
+    }
+
+    cv::Mat Pinhole::projectJac(const cv::Point3f &p3D) {
         cv::Mat Jac(2, 3, CV_32F);
         Jac.at<float>(0, 0) = mvParameters[0] / p3D.z;
         Jac.at<float>(0, 1) = 0.f;
@@ -86,8 +85,7 @@ namespace ORB_SLAM3
         return Jac;
     }
 
-    Eigen::Matrix<double, 2, 3> Pinhole::projectJac(const Eigen::Vector3d &v3D)
-    {
+    Eigen::Matrix<double, 2, 3> Pinhole::projectJac(const Eigen::Vector3d &v3D) {
         Eigen::Matrix<double, 2, 3> Jac;
         Jac(0, 0) = mvParameters[0] / v3D[2];
         Jac(0, 1) = 0.f;
@@ -99,8 +97,7 @@ namespace ORB_SLAM3
         return Jac;
     }
 
-    cv::Mat Pinhole::unprojectJac(const cv::Point2f &p2D)
-    {
+    cv::Mat Pinhole::unprojectJac(const cv::Point2f &p2D) {
         cv::Mat Jac(3, 2, CV_32F);
         Jac.at<float>(0, 0) = 1 / mvParameters[0];
         Jac.at<float>(0, 1) = 0.f;
@@ -112,32 +109,9 @@ namespace ORB_SLAM3
         return Jac;
     }
 
-
-
-/**************************特征点三角化构造地图点*******************
- * 输入：vKeys1：初始帧特征点
- *      vKeys2：当前帧特征点
- *      vMatches12：初始图像帧到当前图像帧的匹配
- *      R21、t21：初始图像帧到当前图像帧的位姿，即世界坐标系到当前图像坐标系
- *               的位姿变换，输入为空，等待求解输出
- *      vP3D：std::vector<cv::Point3f>待输出  进行三角化得到的空间点集合
- *      vbTriangulated：vector<bool> vbTriangulated，等待输出，表示特征点
- *                      是否进行了三角化
- * 用途：Tracking线程中的初始化过程，实现单目图像的初始图像帧和当前
- *      图像帧之间地图点构造和位姿估计
-
-****************************************************************/
-    bool Pinhole::ReconstructWithTwoViews(const std::vector<cv::KeyPoint>& vKeys1,
-                                          const std::vector<cv::KeyPoint>& vKeys2,
-                                          const std::vector<int> &vMatches12,
-                                          cv::Mat &R21, cv::Mat &t21,
-                                          std::vector<cv::Point3f> &vP3D,
-                                          std::vector<bool> &vbTriangulated)
-    {
-        // TwoViewReconstruction类指针,第一次进行三角化时构造指针
-        if(!tvr)
-        {
-            //传递内参矩阵
+    bool Pinhole::ReconstructWithTwoViews(const std::vector<cv::KeyPoint>& vKeys1, const std::vector<cv::KeyPoint>& vKeys2, const std::vector<int> &vMatches12,
+                                 cv::Mat &R21, cv::Mat &t21, std::vector<cv::Point3f> &vP3D, std::vector<bool> &vbTriangulated){
+        if(!tvr){
             cv::Mat K = this->toK();
             tvr = new TwoViewReconstruction(K);
         }
@@ -152,6 +126,12 @@ namespace ORB_SLAM3
         return K;
     }
 
+    cv::Matx33f Pinhole::toK_() {
+        cv::Matx33f K{mvParameters[0], 0.f, mvParameters[2], 0.f, mvParameters[1], mvParameters[3], 0.f, 0.f, 1.f};
+
+        return K;
+    }
+
     bool Pinhole::epipolarConstrain(GeometricCamera* pCamera2,  const cv::KeyPoint &kp1, const cv::KeyPoint &kp2, const cv::Mat &R12, const cv::Mat &t12, const float sigmaLevel, const float unc) {
         //Compute Fundamental Matrix
         cv::Mat t12x = SkewSymmetricMatrix(t12);
@@ -163,6 +143,30 @@ namespace ORB_SLAM3
         const float a = kp1.pt.x*F12.at<float>(0,0)+kp1.pt.y*F12.at<float>(1,0)+F12.at<float>(2,0);
         const float b = kp1.pt.x*F12.at<float>(0,1)+kp1.pt.y*F12.at<float>(1,1)+F12.at<float>(2,1);
         const float c = kp1.pt.x*F12.at<float>(0,2)+kp1.pt.y*F12.at<float>(1,2)+F12.at<float>(2,2);
+
+        const float num = a*kp2.pt.x+b*kp2.pt.y+c;
+
+        const float den = a*a+b*b;
+
+        if(den==0)
+            return false;
+
+        const float dsqr = num*num/den;
+
+        return dsqr<3.84*unc;
+    }
+
+    bool Pinhole::epipolarConstrain_(GeometricCamera *pCamera2, const cv::KeyPoint &kp1, const cv::KeyPoint &kp2, const cv::Matx33f &R12, const cv::Matx31f &t12, const float sigmaLevel, const float unc) {
+        //Compute Fundamental Matrix
+        auto t12x = SkewSymmetricMatrix_(t12);
+        auto K1 = this->toK_();
+        auto K2 = pCamera2->toK_();
+        cv::Matx33f F12 = K1.t().inv()*t12x*R12*K2.inv();
+
+        // Epipolar line in second image l = x1'F12 = [a b c]
+        const float a = kp1.pt.x*F12(0,0)+kp1.pt.y*F12(1,0)+F12(2,0);
+        const float b = kp1.pt.x*F12(0,1)+kp1.pt.y*F12(1,1)+F12(2,1);
+        const float c = kp1.pt.x*F12(0,2)+kp1.pt.y*F12(1,2)+F12(2,2);
 
         const float num = a*kp2.pt.x+b*kp2.pt.y+c;
 
@@ -197,5 +201,14 @@ namespace ORB_SLAM3
         return (cv::Mat_<float>(3,3) <<             0, -v.at<float>(2), v.at<float>(1),
                 v.at<float>(2),               0,-v.at<float>(0),
                 -v.at<float>(1),  v.at<float>(0),              0);
+    }
+
+    cv::Matx33f Pinhole::SkewSymmetricMatrix_(const cv::Matx31f &v)
+    {
+        cv::Matx33f skew{0.f, -v(2), v(1),
+                         v(2), 0.f, -v(0),
+                         -v(1), v(0), 0.f};
+
+        return skew;
     }
 }
