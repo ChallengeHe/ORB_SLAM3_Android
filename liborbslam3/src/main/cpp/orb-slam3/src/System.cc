@@ -12,6 +12,11 @@
 #include <boost/archive/xml_iarchive.hpp>
 #include <boost/archive/xml_oarchive.hpp>
 
+bool has_suffix(const std::string &str, const std::string &suffix) {
+    std::size_t index = str.find(suffix, str.size() - suffix.size());
+    return (index != std::string::npos);
+}
+
 namespace ORB_SLAM3
 {
 
@@ -79,7 +84,12 @@ namespace ORB_SLAM3
         //加载词袋模型
         cout << endl << "Loading ORB Vocabulary. This could take a while..." << endl;
         mpVocabulary = new ORBVocabulary();  //ORBVocabulary类指针，用于地点识别和特征匹配的词袋模型
-        bool bVocLoad = mpVocabulary->loadFromBinaryFile(strVocFile); //从词袋文件中加载词袋
+//        bool bVocLoad = mpVocabulary->loadFromBinaryFile(strVocFile); //从词袋文件中加载词袋
+        bool bVocLoad = false;
+        if (has_suffix(strVocFile, ".txt"))
+            bVocLoad = mpVocabulary->loadFromTextFile(strVocFile);//txt格式打开
+        else
+            bVocLoad = mpVocabulary->loadFromBinaryFile(strVocFile);//bin格式打开
         if(!bVocLoad)//如果没加载成功词袋
         {
             cerr << "Wrong path to vocabulary. " << endl;

@@ -1,17 +1,20 @@
 package com.damon.orbslam3
 
-class NativeLib {
+import android.graphics.PointF
 
-    /**
-     * A native method that is implemented by the 'liborbslam3' native library,
-     * which is packaged with this application.
-     */
-    external fun stringFromJNI(): String
+object NativeLib {
+    external fun nativeInitTrackingSystem(vocFilePath: String, settingsFilePath: String)
+    external fun nativeTrackingMono(
+        bytes: ByteArray,
+        width: Int,
+        height: Int,
+        timestampSec: Double
+    ): List<PointF>
 
-    companion object {
-        // Used to load the 'liborbslam3' library on application startup.
-        init {
-            System.loadLibrary("native-lib")
-        }
+    external fun nativeGetTrackingState(): Int
+    external fun nativeReleaseTrackingSystem()
+
+    init {
+        System.loadLibrary("native-lib")
     }
 }
