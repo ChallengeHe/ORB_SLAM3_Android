@@ -56,7 +56,8 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.4.2'
     implementation 'com.google.android.material:material:1.6.1'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
-    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.5.0"
+//    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.5.0"
+    implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.5.0"
     implementation 'com.github.getActivity:XXPermissions:15.0'
     def camerax_version = '1.2.0-alpha03'
     implementation "androidx.camera:camera-core:$camerax_version"

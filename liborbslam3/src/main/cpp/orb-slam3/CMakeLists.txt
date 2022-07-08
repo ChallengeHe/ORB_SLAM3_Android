@@ -22,8 +22,38 @@ include_directories(Thirdparty/eigen3/Eigen)
 include_directories(Thirdparty/eigen3/Eigen/src)
 include_directories(Thirdparty/boost/include)
 include_directories(Thirdparty/openssl/include)
+include_directories(Thirdparty/Sophus)
 file(GLOB SRC_LIST "src/*.cc" "src/*.cpp" "src/CameraModels/*.cpp")
-add_library(${PROJECT_NAME} SHARED ${SRC_LIST})
+add_library(${PROJECT_NAME} SHARED
+        src/System.cc
+        src/Tracking.cc
+        src/LocalMapping.cc
+        src/LoopClosing.cc
+        src/ORBextractor.cc
+        src/ORBmatcher.cc
+        src/FrameDrawer.cc
+        src/Converter.cc
+        src/MapPoint.cc
+        src/KeyFrame.cc
+        src/Atlas.cc
+        src/Map.cc
+#        src/MapDrawer.cc
+        src/Optimizer.cc
+        src/Frame.cc
+        src/KeyFrameDatabase.cc
+        src/Sim3Solver.cc
+#        src/Viewer.cc
+        src/ImuTypes.cc
+        src/G2oTypes.cc
+        src/CameraModels/Pinhole.cpp
+        src/CameraModels/KannalaBrandt8.cpp
+        src/OptimizableTypes.cpp
+        src/MLPnPsolver.cpp
+        src/GeometricTools.cc
+        src/TwoViewReconstruction.cc
+        src/Config.cc
+        src/Settings.cc
+        )
 
 add_library(crypto SHARED IMPORTED)
 set_target_properties(crypto PROPERTIES IMPORTED_LOCATION

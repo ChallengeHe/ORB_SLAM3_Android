@@ -49,5 +49,5 @@ dependencies {
     implementation "androidx.camera:camera-lifecycle:$camerax_version"
     implementation "androidx.camera:camera-view:$camerax_version"
     implementation 'androidx.window:window:1.0.0-alpha09'
-    implementation project(path: ':liborbslam3')
+//    implementation project(path: ':liborbslam3')
 }

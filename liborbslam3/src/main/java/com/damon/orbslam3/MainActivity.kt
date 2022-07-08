@@ -9,6 +9,7 @@ import android.view.WindowManager
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.damon.orbslam3.databinding.ActivityMainBinding
 import com.hjq.permissions.OnPermissionCallback
 import com.hjq.permissions.XXPermissions
@@ -67,9 +68,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun onPermissionsGranted() {
-        CoroutineScope(Dispatchers.IO).launch {
+        lifecycleScope.launch(Dispatchers.IO){
             NativeLib.nativeInitTrackingSystem(
                 "/storage/emulated/0/SLAM/VOC/ORBvoc.bin",
+//                "/storage/emulated/0/SLAM/VOC/ORBvoc.txt",
                 "/storage/emulated/0/SLAM/Calibration/CameraParam.yaml"
             )
         }
@@ -84,6 +86,7 @@ class MainActivity : AppCompatActivity() {
         val rotation = binding.viewFinder.display.rotation
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
         cameraProviderFuture.addListener({
+
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
             val preview = Preview.Builder()
                 .setTargetAspectRatio(screenAspectRatio)

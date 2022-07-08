@@ -3,6 +3,7 @@
 #include <System.h>
 #include "log.h"
 #include "opencv_util.hpp"
+#include <opencv2/core/eigen.hpp>
 
 static ORB_SLAM3::System *pSystem = nullptr;
 
@@ -56,9 +57,15 @@ Java_com_damon_orbslam3_NativeLib_nativeTrackingMono(JNIEnv *env, jobject thiz, 
         cv::Mat inputSmall;
         int scale = 2;
         cv::resize(input, inputSmall, cv::Size(input.cols / scale, input.rows / scale));
-        LOGI("input:%d x %d", input.cols, input.rows);
-        LOGI("inputSmall:%d x %d", inputSmall.cols, inputSmall.rows);
-        pSystem->TrackMonocular(inputSmall, timestamp_sec);
+//        LOGI("input:%d x %d", input.cols, input.rows);
+//        LOGI("inputSmall:%d x %d", inputSmall.cols, inputSmall.rows);
+        Sophus::SE3f Tcw_SE3f =  pSystem->TrackMonocular(inputSmall, timestamp_sec);
+        cv::Mat pose;
+        Eigen::Matrix4f Tcw_Matrix = Tcw_SE3f.matrix();
+        cv::eigen2cv(Tcw_Matrix, pose);
+        if (!pose.empty()) {
+//            LOGI("get pose");
+        }
         vector<KeyPoint> points = pSystem->GetTrackedKeyPointsUn();
         if (points.size() > 0) {
             jclass point_jcls = env->FindClass("android/graphics/PointF");
@@ -71,6 +78,7 @@ Java_com_damon_orbslam3_NativeLib_nativeTrackingMono(JNIEnv *env, jobject thiz, 
                 env->CallBooleanMethod(list_obj, list_add, tmpPoint);
             }
         }
+//        pSystem->Shutdown();
         return list_obj;
     }
     return NULL;

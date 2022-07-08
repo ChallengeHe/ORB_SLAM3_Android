@@ -40,12 +40,11 @@ class ORBSLAM3Tracking(val mView: ViewOverLay) : ImageAnalysis.Analyzer {
 
     private fun getTrackingStateString(trackingState: Int): String {
         return when (trackingState) {
-            0 -> "暂无图像"
-            1 -> "姿态初始化中"
-            2 -> "正在建图"
-            3 -> "匹配异常"
-            4 -> "姿态丢失"
-            else -> "正在初始化"
+            0 -> "NO IMAGES YET"
+            1 -> "SLAM NOT INITIALIZED"
+            2 -> "SLAM ON"
+            3 -> "SLAM LOST"
+            else -> "SYSTEM NOT READY"
         }
     }
 

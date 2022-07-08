@@ -1,7 +1,7 @@
 /**
 * This file is part of ORB-SLAM3
 *
-* Copyright (C) 2017-2020 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
+* Copyright (C) 2017-2021 Carlos Campos, Richard Elvira, Juan J. Gómez Rodríguez, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 * Copyright (C) 2014-2016 Raúl Mur-Artal, José M.M. Montiel and Juan D. Tardós, University of Zaragoza.
 *
 * ORB-SLAM3 is free software: you can redistribute it and/or modify it under the terms of the GNU General Public
@@ -25,7 +25,6 @@
 #include "Atlas.h"
 #include "ORBVocabulary.h"
 #include "Tracking.h"
-#include "Config.h"
 
 #include "KeyFrameDatabase.h"
 
@@ -47,13 +46,13 @@ class LoopClosing
 {
 public:
 
-    typedef pair<set<KeyFrame*>,int> ConsistentGroup;
+    typedef pair<set<KeyFrame*>,int> ConsistentGroup;    
     typedef map<KeyFrame*,g2o::Sim3,std::less<KeyFrame*>,
         Eigen::aligned_allocator<std::pair<KeyFrame* const, g2o::Sim3> > > KeyFrameAndPose;
 
 public:
 
-    LoopClosing(Atlas* pAtlas, KeyFrameDatabase* pDB, ORBVocabulary* pVoc,const bool bFixScale);
+    LoopClosing(Atlas* pAtlas, KeyFrameDatabase* pDB, ORBVocabulary* pVoc,const bool bFixScale, const bool bActiveLC);
 
     void SetTracker(Tracking* pTracker);
 
@@ -77,33 +76,45 @@ public:
     bool isFinishedGBA(){
         unique_lock<std::mutex> lock(mMutexGBA);
         return mbFinishedGBA;
-    }
+    }   
 
     void RequestFinish();
 
     bool isFinished();
 
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    Viewer* mpViewer;
 
 #ifdef REGISTER_TIMES
-    double timeDetectBoW;
 
-    std::vector<double> vTimeBoW_ms;
-    std::vector<double> vTimeSE3_ms;
-    std::vector<double> vTimePRTotal_ms;
+    vector<double> vdDataQuery_ms;
+    vector<double> vdEstSim3_ms;
+    vector<double> vdPRTotal_ms;
 
-    std::vector<double> vTimeLoopFusion_ms;
-    std::vector<double> vTimeLoopEssent_ms;
-    std::vector<double> vTimeLoopTotal_ms;
+    vector<double> vdMergeMaps_ms;
+    vector<double> vdWeldingBA_ms;
+    vector<double> vdMergeOptEss_ms;
+    vector<double> vdMergeTotal_ms;
+    vector<int> vnMergeKFs;
+    vector<int> vnMergeMPs;
+    int nMerges;
 
-    std::vector<double> vTimeMergeFusion_ms;
-    std::vector<double> vTimeMergeBA_ms;
-    std::vector<double> vTimeMergeTotal_ms;
+    vector<double> vdLoopFusion_ms;
+    vector<double> vdLoopOptEss_ms;
+    vector<double> vdLoopTotal_ms;
+    vector<int> vnLoopKFs;
+    int nLoop;
 
-    std::vector<double> vTimeFullGBA_ms;
-    std::vector<double> vTimeMapUpdate_ms;
-    std::vector<double> vTimeGBATotal_ms;
+    vector<double> vdGBA_ms;
+    vector<double> vdUpdateMap_ms;
+    vector<double> vdFGBATotal_ms;
+    vector<int> vnGBAKFs;
+    vector<int> vnGBAMPs;
+    int nFGBA_exec;
+    int nFGBA_abort;
+
 #endif
+
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
 protected:
 
@@ -130,6 +141,8 @@ protected:
 
     void MergeLocal();
     void MergeLocal2();
+
+    void CheckObservations(set<KeyFrame*> &spKFsMap1, set<KeyFrame*> &spKFsMap2);
 
     void ResetIfRequested();
     bool mbResetRequested;
@@ -217,6 +230,19 @@ protected:
     vector<double> vdPR_CurrentTime;
     vector<double> vdPR_MatchedTime;
     vector<int> vnPR_TypeRecogn;
+
+    //DEBUG
+    string mstrFolderSubTraj;
+    int mnNumCorrection;
+    int mnCorrectionGBA;
+
+
+    // To (de)activate LC
+    bool mbActiveLC = true;
+
+#ifdef REGISTER_LOOP
+    string mstrFolderLoop;
+#endif
 };
 
 } //namespace ORB_SLAM

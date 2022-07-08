@@ -16,6 +16,7 @@ include_directories(
         orb-slam3/Thirdparty/eigen3/Eigen
         orb-slam3/Thirdparty/eigen3/Eigen/src
         orb-slam3/Thirdparty/openssl/include
+        orb-slam3/Thirdparty/Sophus
 )
 add_library(
         ${PROJECT_NAME}
